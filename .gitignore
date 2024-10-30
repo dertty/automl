@@ -162,5 +162,7 @@ cython_debug/
 #.idea/
 
 .devcontainer/
-notebooks/datasets
-.devcontainer/devcontainer.json
+notebooks/datasets/
+datasets
+notebooks/mldata/
+mldata
