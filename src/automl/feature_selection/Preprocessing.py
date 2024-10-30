@@ -14,7 +14,7 @@ from feature_engine.selection import DropHighPSIFeatures
 from catboost import CatBoostClassifier, Pool
 
 import logging
-from typing import TypeVar, Optional
+from typing import TypeVar, Optional, List
 
 
 logger = logging.getLogger('feature_selection')
@@ -109,7 +109,7 @@ class NanFeatureSelector():
     def __init__(self, nan_share_ts: float=0.2) -> None:
         self.nan_share_ts = nan_share_ts
         
-    def __call__(self, df: ArrayType) -> ArrayType:
+    def __call__(self, df: ArrayType) -> List[str]:
         array_type = get_array_type(df)
         check_array_type(array_type)
         
@@ -120,36 +120,39 @@ class NanFeatureSelector():
         return nan_features
 
 
-class QConstantFeatureSelector():
+class QConstantFeatureSelector:
     '''
     Класс для отбора константных и квазиконстантных признаков.
 
     Attributes:
         feature_val_share_ts (float): Пороговое значение максимальной доли значения среди прочих значений признака.
     '''
+    
     def __init__(self, feature_val_share_ts: float = 0.98) -> None:
         self.feature_val_share_ts = feature_val_share_ts
 
-    def find_share_of_value(self, arr: ArrayType, col_name: str) -> Optional[str]:
+    def find_share_of_value(self, arr: pd.Series, col_name: str) -> Optional[str]:
         arr_len = len(arr)
         arr_unique = arr.unique()
-        if len(arr_unique) / arr_len > (1-self.feature_val_share_ts):
-            return None
-        arr_value_counts = np.array([arr.value_counts()[x] for x in arr_unique])
-        arr_share = arr_value_counts / arr_len
-        max_arr_share = np.max(arr_share)
+        # Check if there are too few unique values to exceed the threshold
+        if len(arr_unique) == 1:
+            return col_name
+        
+        arr_value_counts = arr.value_counts(normalize=True)  # Normalize for percentage directly
+        max_arr_share = arr_value_counts.max()
+        
         if max_arr_share >= self.feature_val_share_ts:
             return col_name
-        else:
-            return None
+        return None
         
-    def __call__(self, df: ArrayType) -> ArrayType:
+    def __call__(self, df: ArrayType) -> List[str]:
         array_type = get_array_type(df)
         check_array_type(array_type)
-        X_copy= df.copy()
-        qconst_cols = [self.find_share_of_value(X_copy[x], x) for x in X_copy.columns]
-        qconst_cols = [col for col in qconst_cols if col]
         
+        # Find constant and quasi-constant features
+        qconst_cols = [self.find_share_of_value(df[col], col) for col in df.columns]
+        qconst_cols = [col for col in qconst_cols if col]
+
         return qconst_cols
 
 
