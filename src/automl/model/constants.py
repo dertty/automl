@@ -5,7 +5,7 @@ PATH = Path().resolve() / "ml_data" / datetime.now().strftime("%Y_%m_%d___%H_%M_
 
 
 def create_ml_data_dir():
-    PATH.mkdir(parents=True)
+    PATH.mkdir(parents=True, exist_ok=True)
 
 
 # def is_child():

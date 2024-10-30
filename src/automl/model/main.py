@@ -305,7 +305,7 @@ class AutoML:
 
             # create model's directory
             model_dir = self.path / model.name
-            model_dir.mkdir()
+            model_dir.mkdir(exist_ok=True)
 
             # save the model
             joblib.dump(model, model_dir / f"{model.name}.joblib")
