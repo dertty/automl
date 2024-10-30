@@ -5,7 +5,7 @@
 groups = ["default", "dev", "jupyter"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:c93fe59513eb67c287fd77d7f0c0b1e8f2c5fc8699c46241e924c957c3372647"
+content_hash = "sha256:1e97f80d23af80dded88fccfc88b636e06befb66b75a91a3221dd0530bcc92d3"
 
 [[metadata.targets]]
 requires_python = "==3.11.*"
@@ -34,6 +34,16 @@ dependencies = [
 files = [
     {file = "asttokens-2.4.1-py2.py3-none-any.whl", hash = "sha256:051ed49c3dcae8913ea7cd08e46a606dba30b79993209636c4875bc1d637bc24"},
     {file = "asttokens-2.4.1.tar.gz", hash = "sha256:b03869718ba9a6eb027e134bfdf69f38a236d681c83c160d510768af11254ba0"},
+]
+
+[[package]]
+name = "auto-sklearn"
+version = "0.9.0"
+requires_python = ">=3.5.*"
+summary = ""
+groups = ["default"]
+files = [
+    {file = "auto-sklearn-0.9.0.tar.gz", hash = "sha256:61983d31cf9573fcd9746c5ae09f9e0add28a02463c6f83f89ff9e6ffd1a0129"},
 ]
 
 [[package]]
@@ -785,6 +795,7 @@ version = "4.12.2"
 requires_python = ">=3.8"
 summary = "Backported and Experimental Type Hints for Python 3.8+"
 groups = ["jupyter"]
+marker = "python_version < \"3.12\""
 files = [
     {file = "typing_extensions-4.12.2-py3-none-any.whl", hash = "sha256:04e5ca0351e0f3f85c6853954072df659d0d13fac324d0072316b67d7794700d"},
     {file = "typing_extensions-4.12.2.tar.gz", hash = "sha256:1a7ead55c7e559dd4dee8856e3a88b41225abfe1ce8df57b7c13915fe121ffb8"},
