@@ -16,5 +16,9 @@
                 "ms-python.vscode-pylance"
             ]
         }
-    }
+    },
+    "containerEnv": {
+		"KAGGLE_USERNAME": "",
+		"KAGGLE_KEY": ""
+	}
 }
