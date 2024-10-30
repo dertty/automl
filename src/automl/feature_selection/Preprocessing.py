@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
+import polars as pl
 import joblib
+
 from sklearn.model_selection import train_test_split
 from sklearn.base import BaseEstimator
 from sklearn.pipeline import Pipeline
@@ -10,6 +12,39 @@ from sklearn.preprocessing import OneHotEncoder, TargetEncoder
 from feature_engine.outliers import Winsorizer
 from feature_engine.selection import DropHighPSIFeatures
 from catboost import CatBoostClassifier, Pool
+
+import logging
+from typing import TypeVar, Optional
+
+
+logger = logging.getLogger('feature_selection')
+logger.setLevel(logging.DEBUG)
+
+ArrayType = TypeVar('ArrayType', pd.DataFrame, pl.DataFrame, np.ndarray)
+
+
+def get_array_type(array: ArrayType) -> str:
+    if isinstance(array, pd.DataFrame):
+        return 'pandas'
+    elif isinstance(array, np.ndarray):
+        return 'numpy'
+    elif isinstance(array, pl.DataFrame):
+        return 'polars'
+    else:
+        return ''
+
+
+def check_array_type(type: str) -> None:
+    match type:
+        case 'pandas':
+            pass
+        case 'numpy':
+            raise ValueError(f"make_column_selector can only be applied to pandas dataframes but not {type}")
+        case 'polars':
+            raise ValueError(f"make_column_selector can only be applied to pandas dataframes but not {type}")
+        case _:
+            raise ValueError(f"make_column_selector can only be applied to pandas dataframes but not {type}")
+
 
 def split_data(df, index_columns, target_column, time_column=None, test_size=0.3, random_state = 42):
     """
@@ -42,26 +77,27 @@ def split_data(df, index_columns, target_column, time_column=None, test_size=0.3
         train = pd.concat([train_oot, train_oos])
         train['is_test'] = 0
         test = pd.concat([test_oot, test_oos])
-        print(f'train_share: {train.shape[0]/df.shape[0]}')
-        print(f'test_share: {test.shape[0]/df.shape[0]}')
-        print(f'test_oos_share: {test[test["is_test"]==3].shape[0]/df.shape[0]}')
-        print(f'test_oot_share: {test[test["is_test"]==2].shape[0]/df.shape[0]}')
-        print("Среднее значение таргета")
-        print(f'train target mean: {train[target_column].mean()}')
-        print(f'test_oos_share target mean:   {test[test["is_test"]==3][target_column].mean()}')
-        print(f'test_oot_share target mean:  {test[test["is_test"]==2][target_column].mean()}')
+        logger.info(f'train_share: {train.shape[0]/df.shape[0]}')
+        logger.info(f'test_share: {test.shape[0]/df.shape[0]}')
+        logger.info(f'test_oos_share: {test[test["is_test"]==3].shape[0]/df.shape[0]}')
+        logger.info(f'test_oot_share: {test[test["is_test"]==2].shape[0]/df.shape[0]}')
+        logger.info("Среднее значение таргета")
+        logger.info(f'train target mean: {train[target_column].mean()}')
+        logger.info(f'test_oos_share target mean:   {test[test["is_test"]==3][target_column].mean()}')
+        logger.info(f'test_oot_share target mean:  {test[test["is_test"]==2][target_column].mean()}')
     else:
         train, test = train_test_split(df, test_size = test_size, random_state=random_state)
         test['is_test'] = 3
         train['is_test'] = 0
-        print("Среднее значение таргета")
-        print(f'train target mean: {train[target_column].mean()}')
-        print(f'test target mean: {test[target_column].mean()}')
+        logger.info("Среднее значение таргета")
+        logger.info(f'train target mean: {train[target_column].mean()}')
+        logger.info(f'test target mean: {test[target_column].mean()}')
     index_columns.append('is_test')
     train.set_index(index_columns, inplace=True)
     test.set_index(index_columns, inplace=True)
 
     return train, test
+
 
 class NanFeatureSelector():
     '''
@@ -70,18 +106,19 @@ class NanFeatureSelector():
     Attributes:
         nan_share_ts (float): Пороговое значение доли пропущенных значений.
     '''
-    def __init__(self, nan_share_ts=0.2):
+    def __init__(self, nan_share_ts: float=0.2) -> None:
         self.nan_share_ts = nan_share_ts
-    def __call__(self, df):
-        if not hasattr(df, "iloc"):
-            raise ValueError(
-                "make_column_selector can only be applied to pandas dataframes"
-            )
+        
+    def __call__(self, df: ArrayType) -> ArrayType:
+        array_type = get_array_type(df)
+        check_array_type(array_type)
+        
         X_copy= df.copy()
         nan_share = X_copy.isna().sum() / X_copy.shape[0]
         nan_features = nan_share[nan_share >= self.nan_share_ts].index.tolist()
         
         return nan_features
+
 
 class QConstantFeatureSelector():
     '''
@@ -90,10 +127,10 @@ class QConstantFeatureSelector():
     Attributes:
         feature_val_share_ts (float): Пороговое значение максимальной доли значения среди прочих значений признака.
     '''
-    def __init__(self, feature_val_share_ts=0.98):
+    def __init__(self, feature_val_share_ts: float = 0.98) -> None:
         self.feature_val_share_ts = feature_val_share_ts
 
-    def find_share_of_value(self, arr, col_name):
+    def find_share_of_value(self, arr: ArrayType, col_name: str) -> Optional[str]:
         arr_len = len(arr)
         arr_unique = arr.unique()
         if len(arr_unique) / arr_len > (1-self.feature_val_share_ts):
@@ -106,16 +143,15 @@ class QConstantFeatureSelector():
         else:
             return None
         
-    def __call__(self, df):
-        if not hasattr(df, "iloc"):
-            raise ValueError(
-                "make_column_selector can only be applied to pandas dataframes"
-            )
+    def __call__(self, df: ArrayType) -> ArrayType:
+        array_type = get_array_type(df)
+        check_array_type(array_type)
         X_copy= df.copy()
         qconst_cols = [self.find_share_of_value(X_copy[x], x) for x in X_copy.columns]
         qconst_cols = [col for col in qconst_cols if col]
         
         return qconst_cols
+
 
 class ObjectColumnsSelector:
     '''
@@ -125,15 +161,13 @@ class ObjectColumnsSelector:
         ohe_limiter (int): Максимальное число уникальных категорий для выбора стратегии OneHotEncoding.
         mode (str): Стратегия кодирования признаков.
     '''
-    def __init__(self, ohe_limiter=5, mode='ohe'):
+    def __init__(self, ohe_limiter: int = 5, mode: str = 'ohe') -> None:
         self.ohe_limiter = ohe_limiter
         self.mode = mode
         
-    def __call__(self, df):
-        if not hasattr(df, "iloc"):
-            raise ValueError(
-                "make_column_selector can only be applied to pandas dataframes"
-            )
+    def __call__(self, df: ArrayType) -> ArrayType:
+        array_type = get_array_type(df)
+        check_array_type(array_type)
         
         df_obj = df.select_dtypes(include='object')
         counter_ = df_obj.nunique()
@@ -146,6 +180,7 @@ class ObjectColumnsSelector:
             return []
             
         return final_cols.index.tolist()
+
 
 class PearsonCorrFeatureSelector():
     '''
@@ -160,20 +195,21 @@ class PearsonCorrFeatureSelector():
     Attributes:
         corr_ts (float): Пороговое значение коэффициента корреляции двух переменных.
     '''
-    def __init__(self, corr_ts=0.8):
+    def __init__(self, corr_ts: float = 0.8) -> None:
         self.corr_ts = corr_ts
-    def __call__(self, df):
-        if not hasattr(df, "iloc"):
-            raise ValueError(
-                "make_column_selector can only be applied to pandas dataframes"
-            )
+    
+    def __call__(self, df: ArrayType) -> ArrayType:
+        array_type = get_array_type(df)
+        check_array_type(array_type)
+        
         X_copy= df.select_dtypes(include='number').copy()
         corr_matrix = df.corr(method = 'pearson').abs()
         upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
         corr_cols = [column for column in upper.columns if any(upper[column] > self.corr_ts)]
         
         return corr_cols
-    
+
+
 class SpearmanCorrFeatureSelector():
     '''
     Класс для выявления зависимых признаков c помощью коэффициента корреляции Спирмена. \n
@@ -185,13 +221,13 @@ class SpearmanCorrFeatureSelector():
     Attributes:
         corr_ts (float): Пороговое значение коэффициента корреляции двух переменных.
     '''
-    def __init__(self, corr_ts=0.8):
+    def __init__(self, corr_ts: float = 0.8) -> None:
         self.corr_ts = corr_ts
-    def __call__(self, df):
-        if not hasattr(df, "iloc"):
-            raise ValueError(
-                "make_column_selector can only be applied to pandas dataframes"
-            )
+        
+    def __call__(self, df: ArrayType) -> ArrayType:
+        array_type = get_array_type(df)
+        check_array_type(array_type)
+        
         X_copy= df.select_dtypes(include='number').copy()
         corr_matrix = df.corr(method = 'spearman').abs()
         upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
@@ -230,12 +266,13 @@ class ValTestSelector():
         feature_names = model.feature_names_
         
         #Create a DataFrame using a Dictionary
-        data={'feature_names':feature_names, 'feature_importance':feature_importance}
+        data = {'feature_names': feature_names, 'feature_importance': feature_importance}
         fi_df = pd.DataFrame(data)
         #Sort the DataFrame in order decreasing feature importance
         fi_df.sort_values(by=['feature_importance'], ascending=False,inplace=True)
         
         return fi_df
+    
     def adversarial_test(self, df_train, df_test, random_state=42, auc_trshld = 0.65):
         '''Adversarial test.
             Args:
@@ -311,6 +348,7 @@ class ValTestSelector():
         exclude_cols_by_all_tests = list(set(exclude_by_adversarial_test + exclude_by_psi_test))
         return exclude_cols_by_all_tests
 
+
 def create_preprocess_pipe(nan_share_ts=0.2, qconst_feature_val_share_ts=0.95, impute_num_strategy='median', 
                            impute_cat_strategy='most_frequent', 
                            outlier_capping_method='gaussian', outlier_cap_tail='both',
@@ -381,6 +419,7 @@ def create_preprocess_pipe(nan_share_ts=0.2, qconst_feature_val_share_ts=0.95, i
     )
     return preprocessing_pipe
 
+
 def create_test_pipe(X_train_prep, X_test_prep):
     # Трансформер для исключения признаков, не прошедших тесты
     tests_col_selector = ColumnTransformer( 
@@ -397,6 +436,7 @@ def create_test_pipe(X_train_prep, X_test_prep):
     )
 
     return val_test_pipe
+
 
 def preprocess_data(df_path, index_cols, target_col, time_col=None, test_size=0.15, random_state=42, preprocessing_pipe_path='outputs/preprocessing_pipe.joblib',val_test_pipe_path='outputs/test_pipe.joblib',
                     nan_share_ts=0.2, qconst_feature_val_share_ts=0.95, impute_num_strategy='median', 
