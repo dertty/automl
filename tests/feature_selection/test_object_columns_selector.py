@@ -33,15 +33,15 @@ def test_mte_selection():
 
 
 def test_invalid_mode():
-    selector = ObjectColumnsSelector(ohe_limiter=3, mode='invalid_mode')
-    X = pd.DataFrame({
-        'A': ['apple', 'banana', 'cherry'],
-        'B': ['dog', 'dog', 'cat'],
-        'C': [1, 2, 3],
-        'D': ['red', 'red', 'blue']
-    })
-    selected_features = selector(X)
-    assert selected_features == []
+    with pytest.raises(ValueError, match="Mode must be either 'ohe' or 'mte'."):
+        selector = ObjectColumnsSelector(ohe_limiter=3, mode='invalid_mode')
+        X = pd.DataFrame({
+            'A': ['apple', 'banana', 'cherry'],
+            'B': ['dog', 'dog', 'cat'],
+            'C': [1, 2, 3],
+            'D': ['red', 'red', 'blue']
+        })
+        _ = selector(X)
 
 
 def test_no_object_columns():

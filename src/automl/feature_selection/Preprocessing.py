@@ -99,24 +99,27 @@ def split_data(df, index_columns, target_column, time_column=None, test_size=0.3
     return train, test
 
 
-class NanFeatureSelector():
+class NanFeatureSelector:
     '''
     Класс для отбора признаков с долей пропусков больше заданного значения.
 
     Attributes:
         nan_share_ts (float): Пороговое значение доли пропущенных значений.
     '''
-    def __init__(self, nan_share_ts: float=0.2) -> None:
+
+    def __init__(self, nan_share_ts: float = 0.2) -> None:
         self.nan_share_ts = nan_share_ts
-        
+
     def __call__(self, df: ArrayType) -> List[str]:
-        array_type = get_array_type(df)
+        # Directly ensure input is a DataFrame; assume these functions handle validation
+        array_type = get_array_type(df)  
         check_array_type(array_type)
-        
-        X_copy= df.copy()
-        nan_share = X_copy.isna().sum() / X_copy.shape[0]
+
+        # Calculate the share of NaNs directly without an unnecessary copy
+        nan_share = df.isna().mean()
+        # Select features where the share of NaNs meets or exceeds the threshold
         nan_features = nan_share[nan_share >= self.nan_share_ts].index.tolist()
-        
+
         return nan_features
 
 
@@ -127,33 +130,33 @@ class QConstantFeatureSelector:
     Attributes:
         feature_val_share_ts (float): Пороговое значение максимальной доли значения среди прочих значений признака.
     '''
-    
+
     def __init__(self, feature_val_share_ts: float = 0.98) -> None:
         self.feature_val_share_ts = feature_val_share_ts
 
     def find_share_of_value(self, arr: pd.Series, col_name: str) -> Optional[str]:
-        arr_len = len(arr)
-        arr_unique = arr.unique()
-        # Check if there are too few unique values to exceed the threshold
-        if len(arr_unique) == 1:
-            return col_name
-        
-        arr_value_counts = arr.value_counts(normalize=True)  # Normalize for percentage directly
+        # Calculate the proportion of the most frequent value in the column
+        arr_value_counts = arr.value_counts(normalize=True)
         max_arr_share = arr_value_counts.max()
-        
+
+        # Check if the proportion exceeds the threshold
         if max_arr_share >= self.feature_val_share_ts:
             return col_name
         return None
         
     def __call__(self, df: ArrayType) -> List[str]:
-        array_type = get_array_type(df)
+        # Validate the input type
+        array_type = get_array_type(df)  
         check_array_type(array_type)
-        
-        # Find constant and quasi-constant features
-        qconst_cols = [self.find_share_of_value(df[col], col) for col in df.columns]
-        qconst_cols = [col for col in qconst_cols if col]
 
-        return qconst_cols
+        # List comprehension to gather quasi-constant columns
+        qconst_cols = [
+            self.find_share_of_value(df[col], col) 
+            for col in df.columns
+        ]
+        
+        # Filter out None values (columns not deemed quasi-constant)
+        return [col for col in qconst_cols if col]
 
 
 class ObjectColumnsSelector:
@@ -164,80 +167,93 @@ class ObjectColumnsSelector:
         ohe_limiter (int): Максимальное число уникальных категорий для выбора стратегии OneHotEncoding.
         mode (str): Стратегия кодирования признаков.
     '''
+    
     def __init__(self, ohe_limiter: int = 5, mode: str = 'ohe') -> None:
+        if mode not in {'ohe', 'mte'}:
+            raise ValueError("Mode must be either 'ohe' or 'mte'.")
+        
         self.ohe_limiter = ohe_limiter
         self.mode = mode
-        
-    def __call__(self, df: ArrayType) -> ArrayType:
-        array_type = get_array_type(df)
+
+    def __call__(self, df: ArrayType) -> List[str]:
+        # Ensure the input is correctly validated
+        array_type = get_array_type(df)  
         check_array_type(array_type)
-        
+
+        # Handle only object (categorical) type columns
         df_obj = df.select_dtypes(include='object')
-        counter_ = df_obj.nunique()
-
+        unique_counts = df_obj.nunique()
+        
+        # Depending on the mode, select columns accordingly
         if self.mode == 'ohe':
-            final_cols = counter_[counter_ <= self.ohe_limiter]
-        elif self.mode == 'mte':
-            final_cols = counter_[counter_ > self.ohe_limiter]
+            final_cols = unique_counts.index[unique_counts <= self.ohe_limiter].tolist()
         else:
-            return []
-            
-        return final_cols.index.tolist()
+            final_cols = unique_counts.index[unique_counts > self.ohe_limiter].tolist()
+
+        return final_cols
 
 
-class PearsonCorrFeatureSelector():
+class PearsonCorrFeatureSelector:
     '''
-    Класс для выявления зависимых признаков c помощью коэффициента корреляции Пирсона. \n
-    Возвращает вектор названий, в который включен один из двух коррелирующих признаков. \n
-    Коэффициент корреляции Пирсона (Pearson correlation coefficient) — это параметрический тест, который строится на основе расчета ковариации двух переменных, 
-    разделенного на произведение среднеквадратического отклонения каждой из них.
-    Значения, приближающиеся к 1 указывают на сильную положительную линейную корреляцию. Близкие к -1 на сильную отрицательную линейную корреляцию. 
-    Околонулевые значения предполагают отсутствие линейной корреляции. \n
-    У коэффициента Пирсона есть ряд ограничений, в частности, он выявляет только линейную взаимосвязь количественных переменных. 
+    Класс для выявления зависимых признаков c помощью коэффициента корреляции Пирсона.
 
     Attributes:
         corr_ts (float): Пороговое значение коэффициента корреляции двух переменных.
     '''
+    
     def __init__(self, corr_ts: float = 0.8) -> None:
         self.corr_ts = corr_ts
-    
-    def __call__(self, df: ArrayType) -> ArrayType:
-        array_type = get_array_type(df)
+
+    def __call__(self, df: pd.DataFrame) -> List[str]:
+        # Validate input to ensure it's a DataFrame
+        array_type = get_array_type(df)  
         check_array_type(array_type)
-        
-        X_copy= df.select_dtypes(include='number').copy()
-        df = df.dropna(how='any')
-        corr_matrix = df.corr(method = 'pearson').abs()
-        upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
-        corr_cols = [column for column in upper.columns if any(upper[column] > self.corr_ts)]
-        
+
+        # Select only numeric columns directly, dropping NaN rows before computing correlation
+        df_numeric = df.select_dtypes(include='number').dropna()
+
+        # Compute Pearson correlation matrix
+        corr_matrix = df_numeric.corr(method='pearson').abs()
+
+        # Use upper triangle matrix to identify highly correlated columns
+        upper_triangle = np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
+        upper_corr = corr_matrix.where(upper_triangle)
+
+        # List columns with correlations above the threshold
+        corr_cols = [col for col in upper_corr.columns if any(upper_corr[col] > self.corr_ts)]
+
         return corr_cols
 
 
-class SpearmanCorrFeatureSelector():
+class SpearmanCorrFeatureSelector:
     '''
-    Класс для выявления зависимых признаков c помощью коэффициента корреляции Спирмена. \n
-    Возвращает вектор названий, в который включен один из двух коррелирующих признаков. \n
-    Коэффициент ранговой корреляции Спирмена (Spearman’s Rank Correlation Coefficient) хорошо измеряет монотонную
-    зависимость двух переменных.
-    Это непараметрический тест, который не предполагает каких-либо допущений о распределении генеральной совокупности.
+    Класс для выявления зависимых признаков c помощью коэффициента корреляции Спирмена.
 
     Attributes:
         corr_ts (float): Пороговое значение коэффициента корреляции двух переменных.
     '''
+    
     def __init__(self, corr_ts: float = 0.8) -> None:
         self.corr_ts = corr_ts
         
-    def __call__(self, df: ArrayType) -> ArrayType:
+    def __call__(self, df: pd.DataFrame) -> List[str]:
+        # Validate input type; assume these functions handle validation
         array_type = get_array_type(df)
         check_array_type(array_type)
-        
-        X_copy= df.select_dtypes(include='number').copy()
-        df = df.dropna(how='any')
-        corr_matrix = df.corr(method = 'spearman').abs()
-        upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
-        corr_cols = [column for column in upper.columns if any(upper[column] > self.corr_ts)]
-        
+
+        # Select only numeric columns and drop NaN values directly
+        df_numeric = df.select_dtypes(include='number').dropna()
+
+        # Compute Spearman correlation matrix
+        corr_matrix = df_numeric.corr(method='spearman').abs()
+
+        # Use upper triangle from the matrix to avoid duplicate checks
+        upper_triangle = np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
+        upper_corr = corr_matrix.where(upper_triangle)
+
+        # Identify columns with correlation higher than the threshold
+        corr_cols = [col for col in upper_corr.columns if any(upper_corr[col] > self.corr_ts)]
+
         return corr_cols
 
 
