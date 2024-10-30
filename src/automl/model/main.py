@@ -1,4 +1,5 @@
 from typing import List, Union
+from typing import Self
 
 import joblib
 import numpy as np
@@ -18,6 +19,7 @@ from .sklearn_forests import (
 from .type_hints import FeaturesType, TargetType
 from .utils import save_yaml
 from .xgboost import XGBClassification, XGBRegression
+
 
 log = get_logger(__name__)
 
@@ -252,7 +254,7 @@ class AutoML:
         Xs_test: Union[FeaturesType, List[FeaturesType]],
         ys_test: Union[TargetType, List[TargetType]],
         categorical_features=[],
-    ):
+    ) -> Self:
         """If self.time_series == True -> X should be sorted by time."""
 
         self.feature_names = X.columns
@@ -329,6 +331,7 @@ class AutoML:
                     f"{self.best_model.name}. Best score: {self.best_score} \n",
                     msg_type="best",
                 )
+        return self
 
     def predict(self, X: FeaturesType, model_name=None):
 
