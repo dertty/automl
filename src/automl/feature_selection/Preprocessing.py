@@ -206,6 +206,7 @@ class PearsonCorrFeatureSelector():
         check_array_type(array_type)
         
         X_copy= df.select_dtypes(include='number').copy()
+        df = df.dropna(how='any')
         corr_matrix = df.corr(method = 'pearson').abs()
         upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
         corr_cols = [column for column in upper.columns if any(upper[column] > self.corr_ts)]
@@ -232,6 +233,7 @@ class SpearmanCorrFeatureSelector():
         check_array_type(array_type)
         
         X_copy= df.select_dtypes(include='number').copy()
+        df = df.dropna(how='any')
         corr_matrix = df.corr(method = 'spearman').abs()
         upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
         corr_cols = [column for column in upper.columns if any(upper[column] > self.corr_ts)]
