@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from automl.feature_selection.Preprocessing import QConstantFeatureSelector
-from automl.feature_selection.Preprocessing import get_array_type, check_array_type
+from automl.feature_selection.selectors import QConstantFeatureSelector
+from automl.utils.utils import get_array_type, check_array_type
 
 
 

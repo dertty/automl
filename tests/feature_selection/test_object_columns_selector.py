@@ -3,8 +3,8 @@
 import pandas as pd
 import pytest
 
-from automl.feature_selection.Preprocessing import ObjectColumnsSelector
-from automl.feature_selection.Preprocessing import get_array_type, check_array_type
+from automl.feature_selection.selectors import ObjectColumnsSelector
+from automl.utils.utils import get_array_type, check_array_type
 
 
 def test_ohe_selection():
