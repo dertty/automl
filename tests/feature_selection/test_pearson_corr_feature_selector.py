@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from automl.feature_selection.Preprocessing import PearsonCorrFeatureSelector
-from automl.feature_selection.Preprocessing import get_array_type, check_array_type
+from automl.feature_selection.selectors import PearsonCorrFeatureSelector
+from automl.utils.utils import get_array_type, check_array_type
 
 
 def test_strongly_correlated_features():
