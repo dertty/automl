@@ -12,7 +12,7 @@ from sklearn.base import BaseEstimator
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import OneHotEncoder, TargetEncoder
+from sklearn.preprocessing import OneHotEncoder, TargetEncoder, OrdinalEncoder
 from feature_engine.outliers import Winsorizer
 from feature_engine.selection import DropHighPSIFeatures
 from catboost import CatBoostClassifier, Pool
@@ -194,7 +194,7 @@ class ValTestSelector():
 def create_preprocess_pipe(nan_share_ts=0.2, qconst_feature_val_share_ts=0.95, impute_num_strategy='median', 
                            impute_cat_strategy='most_frequent', 
                            outlier_capping_method='gaussian', outlier_cap_tail='both',
-                           corr_ts = 0.8):
+                           corr_ts = 0.8, oe_min_freq=0.1):
 
     # Трансформер для отбора признаков с долей пропусков менее заданного значения 
     nan_col_selector = ColumnTransformer( 
@@ -234,10 +234,11 @@ def create_preprocess_pipe(nan_share_ts=0.2, qconst_feature_val_share_ts=0.95, i
     object_encoder = ColumnTransformer(
         transformers=[
             ('OneHotEncoder', OneHotEncoder(sparse_output=False, drop='first', handle_unknown='ignore'), ObjectColumnsSelector(mode='ohe')),             
-            ('MeanTargetEncoder', TargetEncoder(target_type="auto"), ObjectColumnsSelector(mode='mte'))        
+            ('MeanTargetEncoder', TargetEncoder(target_type="auto"), ObjectColumnsSelector(mode='mte')),
+            ("OrdinalEncoder", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1, min_frequency=oe_min_freq), ObjectColumnsSelector(mode='oe'))       
         ],
         remainder='passthrough',
-        verbose_feature_names_out=False
+        verbose_feature_names_out=True
     ).set_output(transform='pandas')
     # Трансформер для коррелирующих признаков
     corr_col_selector = ColumnTransformer( 
@@ -284,7 +285,8 @@ def preprocess_data(df_path, index_cols, target_col, time_col=None, test_size=0.
                     nan_share_ts=0.2, qconst_feature_val_share_ts=0.95, impute_num_strategy='median', 
                     impute_cat_strategy='most_frequent', 
                     outlier_capping_method='gaussian', outlier_cap_tail='both',
-                    corr_ts = 0.8):
+                    corr_ts = 0.8,
+                    pipe_steps=['nan_cols_dropper', 'nan_imputer', 'object_encoder', 'qconst_dropper', 'outlier_capper', 'corr_cols_dropper']):
     """
     Docstring в разработке
     """
@@ -303,7 +305,17 @@ def preprocess_data(df_path, index_cols, target_col, time_col=None, test_size=0.
     preprocessing_pipe = create_preprocess_pipe(nan_share_ts, qconst_feature_val_share_ts, impute_num_strategy, 
                                                 impute_cat_strategy, 
                                                 outlier_capping_method, outlier_cap_tail,
-                                                corr_ts)
+                                                corr_ts, oe_min_freq)
+    pipe_step_index_up = 0
+    init_pipe_len = len(preprocessing_pipe.steps)
+    for pipe_step_index in range(init_pipe_len):
+        if preprocessing_pipe.steps[pipe_step_index_up][0] in pipe_steps:
+            pipe_step_index_up += 1
+            continue
+        else:
+            preprocessing_pipe.steps.pop(pipe_step_index_up)
+    if list(preprocessing_pipe.named_steps.keys()) == pipe_steps:
+        print('Успешно заданы шаги pipeline')
     # Делаем fit пайплайна обработки на тренировочной выборке
     preprocessing_pipe.fit(X_train, y_train)
     joblib.dump(preprocessing_pipe, preprocessing_pipe_path)
