@@ -6,17 +6,25 @@ import optuna
 
 from .constants import PATH
 
+
+def center_text(text: str, max_len: int = 12):
+    """Pads the text with whitespaces to center it."""
+    pad_right = (max_len - len(text)) // 2
+    pad_left = max_len - len(text) - pad_right
+    return " " * pad_right + text + " " * pad_left
+
+
 _log_format = f"[%(asctime)s] - %(message)s"
 msg_types_reprs = {
-    "start": "   START   ",
-    "end": "    END    ",
-    "score": "   SCORE   ",
-    "best_params": "BEST PARAMS",
-    "fit": "    FIT    ",
-    "optuna": "   OPTUNA  ",
-    "new_best": "  NEW BEST ",
-    "best": "BEST  MODEL",
-    "model": "   MODEL   ",
+    "start": center_text("START"),
+    "end": center_text("END"),
+    "score": center_text("SCORE"),
+    "best_params": center_text("BEST PARAMS"),
+    "fit": center_text("FIT"),
+    "optuna": center_text("OPTUNA"),
+    "new_best": center_text("NEW BEST"),
+    "best": center_text("BEST  MODEL"),
+    "model": center_text("MODEL"),
 }
 
 # disable default optuna logs

@@ -11,8 +11,8 @@ from sklearn.model_selection import (
     cross_validate,
 )
 
+from ...loggers import get_logger
 from ..base_model import BaseModel
-from ..loggers import get_logger
 from ..type_hints import FeaturesType, TargetType
 from ..utils import SuppressWarnings, convert_to_numpy
 
