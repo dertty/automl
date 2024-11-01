@@ -1,15 +1,14 @@
-from typing import List, Union
-from typing import Self
+from typing import List, Self, Union
 
 import joblib
 import numpy as np
 
+from ..constants import PATH, create_ml_data_dir
+from ..loggers import configure_root_logger, get_logger
 from .catboost import CatBoostClassification, CatBoostRegression
-from .constants import PATH, create_ml_data_dir
 from .lama import TabularLama, TabularLamaNN, TabularLamaUtilized
 from .lightgbm import LightGBMClassification, LightGBMRegression
 from .linear import LogisticRegression, RidgeRegression
-from .loggers import configure_root_logger, get_logger
 from .sklearn_forests import (
     ExtraTreesClassification,
     ExtraTreesRegression,
@@ -17,9 +16,8 @@ from .sklearn_forests import (
     RandomForestRegression,
 )
 from .type_hints import FeaturesType, TargetType
-from .utils import save_yaml
+from .utils import convert_to_numpy, save_yaml
 from .xgboost import XGBClassification, XGBRegression
-
 
 log = get_logger(__name__)
 
@@ -258,6 +256,7 @@ class AutoML:
         """If self.time_series == True -> X should be sorted by time."""
 
         self.feature_names = X.columns
+        y = convert_to_numpy(y)
 
         for i, model in enumerate(self.models_list):
             log.info(

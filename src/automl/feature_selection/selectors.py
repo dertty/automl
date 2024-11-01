@@ -80,7 +80,7 @@ class ObjectColumnsSelector:
     
     def __init__(self, ohe_limiter: int = 5, mode: str = 'ohe') -> None:
         if mode not in {'ohe', 'mte'}:
-            raise ValueError("Mode must be either 'ohe' or 'mte'.")
+            raise ValueError("Mode must be either 'ohe' or 'mte' or 'oe'.")
         
         self.ohe_limiter = ohe_limiter
         self.mode = mode
