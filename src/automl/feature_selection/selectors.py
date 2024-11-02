@@ -4,8 +4,8 @@ import numpy as np
 import logging
 from typing import TypeVar, Optional, List
 
-from automl.utils.utils import ArrayType
-from automl.utils.utils import get_array_type,check_array_type
+from ..utils.utils import ArrayType
+from ..utils.utils import get_array_type,check_array_type
 
 
 
@@ -29,6 +29,7 @@ class NanFeatureSelector:
         nan_share = df.isna().mean()
         # Select features where the share of NaNs meets or exceeds the threshold
         nan_features = nan_share[nan_share >= self.nan_share_ts].index.tolist()
+
 
         return nan_features
 
@@ -64,9 +65,9 @@ class QConstantFeatureSelector:
             self.find_share_of_value(df[col], col) 
             for col in df.columns
         ]
-        
         # Filter out None values (columns not deemed quasi-constant)
-        return [col for col in qconst_cols if col]
+        # `x is None` checks for Nones
+        return [col for col in qconst_cols if col is not None]
 
 
 class ObjectColumnsSelector:
@@ -79,7 +80,7 @@ class ObjectColumnsSelector:
     '''
     
     def __init__(self, ohe_limiter: int = 5, mode: str = 'ohe') -> None:
-        if mode not in {'ohe', 'mte'}:
+        if mode not in {'ohe', 'mte', 'oe'}:
             raise ValueError("Mode must be either 'ohe' or 'mte' or 'oe'.")
         
         self.ohe_limiter = ohe_limiter

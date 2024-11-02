@@ -17,6 +17,14 @@ from feature_engine.outliers import Winsorizer
 from feature_engine.selection import DropHighPSIFeatures
 from catboost import CatBoostClassifier, Pool
 
+from .selectors import (
+    NanFeatureSelector,
+    QConstantFeatureSelector,
+    PearsonCorrFeatureSelector,
+    SpearmanCorrFeatureSelector,
+    ObjectColumnsSelector
+)
+
 import logging
 from typing import TypeVar, Optional, List
 
@@ -125,6 +133,8 @@ class ValTestSelector():
             Returns:
             ignore_features: признаки, не прошедшие adversarial тест
         '''
+
+        
         df_train['dataset_label'] = 0
         df_test['dataset_label'] = 1
         target = 'dataset_label'
@@ -176,8 +186,25 @@ class ValTestSelector():
             raise ValueError(
                 "make_column_selector can only be applied to pandas dataframes"
             )
+        
+        """
+        Here we need to somehow consider target encoded columns.
+        Reason: TargetEncoding is fitted via the `cross-fitting` procedure.
+        Read here: (https://scikit-learn.org/1.5/modules/preprocessing.html#target-encoder).
+        This results in the totally different variable distributioin on train and test.
+        Obviously, such features do not pass `adversarial_test` and `psi_test`, but should be kept.
+
+        Solution for now: delete such columns from `X_train_copy`, `X_test_copy`.
+        """
+
+        
         X_train_copy= self.X_train.copy()
         X_test_copy= self.X_test.copy()
+
+        target_encoded_columns = X_train_copy.columns[X_train_copy.columns.str.startswith("MeanTargetEncoder")].values
+        X_train_copy = X_train_copy.drop(columns=target_encoded_columns)
+        X_test_copy = X_test_copy.drop(columns=target_encoded_columns)
+
         X_train_copy['is_test_psi'] = 0
         X_test_copy['is_test_psi'] = 1
         #exclude_by_psi_test = [col for col in X_train_copy.columns if self.calculate_psi(X_train_copy[col], X_test_copy[col]) >= self.psi_ts]
@@ -222,20 +249,25 @@ def create_preprocess_pipe(nan_share_ts=0.2, qconst_feature_val_share_ts=0.95, i
         ],
         verbose_feature_names_out=False   # Оставляем оригинальные названия колонок
     ).set_output(transform='pandas')      # Трансформер будет возвращать pandas
+    
     # Трансформер для ограничения выбросов
+    # do not consider categorical features and pass them to the succesive steps
     outlier_capper = ColumnTransformer(
         transformers=[
             ('outliers_capping', Winsorizer(capping_method=outlier_capping_method, tail=outlier_cap_tail), make_column_selector(dtype_include="number")),
         ],
+        remainder='passthrough',
         verbose_feature_names_out=False   # Оставляем оригинальные названия колонок
     ).set_output(transform='pandas')      # Трансформер будет возвращать pandas
 
     # Трансформер для кодирования категориальных признаков 
+    # return OHE, OE transformed columns in int data format
+    # to distinguish them from numeric + for catboost, lightgbm.
     object_encoder = ColumnTransformer(
         transformers=[
-            ('OneHotEncoder', OneHotEncoder(sparse_output=False, drop='first', handle_unknown='ignore'), ObjectColumnsSelector(mode='ohe')),             
+            ('OneHotEncoder', OneHotEncoder(sparse_output=False, drop='first', handle_unknown='ignore', dtype=np.int16), ObjectColumnsSelector(mode='ohe')),             
             ('MeanTargetEncoder', TargetEncoder(target_type="auto"), ObjectColumnsSelector(mode='mte')),
-            ("OrdinalEncoder", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1, min_frequency=oe_min_freq), ObjectColumnsSelector(mode='oe'))       
+            ("OrdinalEncoder", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1, min_frequency=oe_min_freq, dtype=np.int16), ObjectColumnsSelector(mode='oe'))       
         ],
         remainder='passthrough',
         verbose_feature_names_out=True
@@ -250,14 +282,17 @@ def create_preprocess_pipe(nan_share_ts=0.2, qconst_feature_val_share_ts=0.95, i
         verbose_feature_names_out=False   # Оставляем оригинальные названия колонок
     ).set_output(transform='pandas')      # Трансформер будет возвращать pandas
 
+    # change the order of transformers
+    # transform categorical at the end
+    # to prevent them from being changed by other steps
     preprocessing_pipe = Pipeline(
     [
         ("nan_cols_dropper", nan_col_selector),
         ("nan_imputer", nan_imputer),
-        ("object_encoder", object_encoder),
-        ("qconst_dropper", qconst_col_selector),
         ("outlier_capper", outlier_capper),
         ("corr_cols_dropper", corr_col_selector),
+        ("object_encoder", object_encoder),
+        ("qconst_dropper", qconst_col_selector),
     ], verbose=True
     )
     return preprocessing_pipe
