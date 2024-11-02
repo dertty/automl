@@ -1,16 +1,20 @@
 import numpy as np
+from sklearn.metrics import make_scorer
 from sklearn.metrics import accuracy_score, roc_auc_score
 
-from ..type_hints import TargetType
-from .base import BaseMetric, BaseScorer
+from automl.type_hints import TargetType
+from .base import BaseMetric
 
 
 class Accuracy(BaseMetric):
-    def __init__(self):
+    def __init__(self, thr=0.5):
         self.greater_is_better = True
+        self.needs_proba = True
+        self.is_has_thr = True
+        self.thr = thr
+        self.model_type = None
 
     def __call__(self, y_true: TargetType, y_pred: TargetType):
-
         if y_pred.ndim == 1:
             # y_pred is an array of labels (ex. [1, 0, 2, 1, 2, 0])
             # or an array of binary probabilities (ex. [0.8, 0.1, 0.4, 0.9])
@@ -18,7 +22,7 @@ class Accuracy(BaseMetric):
             if np.max(y_pred < 1):
                 # binary probabilities
                 # convert to labels and reshape
-                y_pred = (y_pred > 0.5).reshape(y_pred.shape[0])
+                y_pred = (y_pred > self.thr).reshape(y_pred.shape[0])
             else:
                 # array of labels
                 pass
@@ -31,7 +35,7 @@ class Accuracy(BaseMetric):
                 #      [0.2],
                 #      [0.9]]
                 # compare `y_pred` with 0.5 and flatten an array
-                y_pred = (y_pred > 0.5).astype(int).reshape(y_pred.shape[0])
+                y_pred = (y_pred > self.thr).astype(int).reshape(y_pred.shape[0])
 
             elif y_pred.shape[1] > 1:
                 # `y_pred` contains probabilities
@@ -46,14 +50,20 @@ class Accuracy(BaseMetric):
 
         return accuracy_score(y_true, y_pred)
 
-    def get_scorer(self):
-        return BaseScorer(self, "predict")
+    def get_score_name(self):
+        return 'accuracy'
+    
+    def _get_scorer(self):
+        return make_scorer(self, response_method='predict_proba', greater_is_better=self.greater_is_better)
 
 
 class RocAuc(BaseMetric):
     def __init__(self, multi_class="ovo"):
-        self.greater_is_better = True
         self.multi_class = multi_class
+        self.greater_is_better = True
+        self.needs_proba = True
+        self.is_has_thr = False
+        self.model_type = None
 
     def __call__(self, y_true, y_pred):
 
@@ -100,5 +110,8 @@ class RocAuc(BaseMetric):
 
         return roc_auc_score(y_true, y_pred, multi_class=self.multi_class)
 
-    def get_scorer(self):
-        return BaseScorer(self, "predict_proba")
+    def get_score_name(self):
+        return 'roc_auc'
+    
+    def _get_scorer(self):
+        return make_scorer(self, response_method='predict_proba', greater_is_better=self.greater_is_better)

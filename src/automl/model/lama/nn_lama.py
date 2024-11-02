@@ -8,7 +8,6 @@ from torch import set_num_threads as set_num_threads_torch
 
 from ...loggers import get_logger
 from ..base_model import BaseModel
-from ..metrics import MSE
 from ..type_hints import FeaturesType, TargetType
 from ..utils import convert_to_pandas
 
@@ -28,7 +27,7 @@ class TabularLamaNN(BaseModel):
         n_jobs=6,
         random_state=42,
         n_folds=5,
-        metric=MSE(),
+        scorer=None,
         time_series=False,
     ):
 
@@ -40,7 +39,7 @@ class TabularLamaNN(BaseModel):
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.n_folds = n_folds
-        self.metric = metric
+        self.scorer = scorer
         self.time_series = time_series
 
         if task == "regression":
@@ -71,8 +70,8 @@ class TabularLamaNN(BaseModel):
         model = TabularAutoML(
             task=Task(
                 name=self.task,
-                metric=self.metric,
-                greater_is_better=self.metric.greater_is_better,
+                metric=self.scorer.score,
+                greater_is_better=self.scorer.greater_is_better,
             ),
             general_params={"use_algos": [[self.nn_name]]},
             timeout=2 * self.timeout,
@@ -112,12 +111,12 @@ class TabularLamaNN(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=None,
+        scorer=None,
         timeout=None,
         categorical_features=[],
     ):
         self.timeout = timeout
-        self.metric = metric
+        self.scorer = scorer
         self.categorical_features = categorical_features
 
     def _predict(self, X_test):

@@ -11,7 +11,6 @@ from sklearn.model_selection import (
 
 from ...loggers import get_logger
 from ..base_model import BaseModel
-from ..metrics import MSE
 from ..type_hints import FeaturesType, TargetType
 from ..utils import LogWhenImproved, convert_to_numpy
 
@@ -113,7 +112,7 @@ class ExtraTreesRegression(BaseModel):
             "verbose": self.verbose,
         }
 
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, scorer):
         cv = self.kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
@@ -124,14 +123,14 @@ class ExtraTreesRegression(BaseModel):
             model,
             X,
             y,
-            scoring=metric.get_scorer(),
+            scoring=scorer,
             cv=cv,
         )
 
         # if not `greater_is_better` the scores will be negaitive
         # multiply by the `sign` to always return positive score
         sign = 1
-        if not metric.greater_is_better:
+        if not scorer.greater_is_better:
             sign = -1
 
         return sign * np.mean(scores["test_score"])
@@ -140,7 +139,7 @@ class ExtraTreesRegression(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=MSE(),
+        scorer=None,
         timeout=60,
         categorical_features=[],
     ):
@@ -155,11 +154,11 @@ class ExtraTreesRegression(BaseModel):
         # optimize parameters
         study = optuna.create_study(
             study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
+            direction="maximize" if scorer.greater_is_better else "minimize",
             sampler=sampler,
         )
         study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
+            lambda trial: self.objective(trial, X, y, scorer),
             timeout=timeout,
             n_jobs=1,
             callbacks=[LogWhenImproved()],
@@ -301,7 +300,7 @@ class ExtraTreesClassification(BaseModel):
             "verbose": self.verbose,
         }
 
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, scorer):
         cv = self.kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
@@ -313,14 +312,14 @@ class ExtraTreesClassification(BaseModel):
             model,
             X,
             y,
-            scoring=metric.get_scorer(),
+            scoring=scorer,
             cv=cv,
         )
 
         # if not `greater_is_better` the scores will be negaitive
         # multiply by the `sign` to always return positive score
         sign = 1
-        if not metric.greater_is_better:
+        if not scorer.greater_is_better:
             sign = -1
 
         return sign * np.mean(scores["test_score"])
@@ -329,7 +328,7 @@ class ExtraTreesClassification(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=MSE(),
+        scorer=None,
         timeout=60,
         categorical_features=[],
     ):
@@ -344,11 +343,11 @@ class ExtraTreesClassification(BaseModel):
         # optimize parameters
         study = optuna.create_study(
             study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
+            direction="maximize" if scorer.greater_is_better else "minimize",
             sampler=sampler,
         )
         study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
+            lambda trial: self.objective(trial, X, y, scorer),
             timeout=timeout,
             n_jobs=1,
             callbacks=[LogWhenImproved()],

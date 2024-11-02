@@ -73,7 +73,7 @@ class RidgeRegression(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=None,
+        scorer=None,
         timeout=None,
         categorical_features=[],
     ):
@@ -169,7 +169,7 @@ class LogisticRegression(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=None,
+        scorer=None,
         timeout=None,
         categorical_features=[],
     ):
@@ -219,19 +219,19 @@ class LogisticRegression(BaseModel):
                     model,
                     X,
                     y,
-                    scoring=metric.get_scorer(),
+                    scoring=scorer,
                     cv=cv,
                 )
 
             # if not `greater_is_better` the scores will be negaitive
             # multiply by the `sign` to always return positive score
             sign = 1
-            if not metric.greater_is_better:
+            if not scorer.greater_is_better:
                 sign = -1
 
             iter_metric = sign * np.mean(scores["test_score"])
             # compare iter metric with the best metric
-            if i == 0 or metric.is_better(iter_metric, best_metric):
+            if i == 0 or scorer.is_better(iter_metric, best_metric):
                 best_metric = iter_metric
                 best_C = C
 

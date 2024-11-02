@@ -9,7 +9,6 @@ from xgboost import XGBRegressor as XGBReg
 
 from ...loggers import get_logger
 from ..base_model import BaseModel
-from ..metrics import MSE
 from ..type_hints import FeaturesType, TargetType
 from ..utils import LogWhenImproved, convert_to_numpy, convert_to_pandas
 
@@ -141,7 +140,7 @@ class XGBRegression(BaseModel):
         }
         return not_tuned_params
 
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, scorer):
         """
         Perform cross-validation to evaluate the model.
         Mean test score is returned.
@@ -164,7 +163,7 @@ class XGBRegression(BaseModel):
             )
             y_pred = model.predict(X.iloc[test_idx])
 
-            cv_metrics.append(metric(y[test_idx], y_pred))
+            cv_metrics.append(scorer.score(y[test_idx], y_pred))
             best_num_iterations.append(model.best_iteration)
 
         # add `n_estimators` to the optuna parameters
@@ -176,7 +175,7 @@ class XGBRegression(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=MSE(),
+        scorer=None,
         timeout=60,
         categorical_features=[],
     ):
@@ -196,11 +195,11 @@ class XGBRegression(BaseModel):
         # optimize parameters
         study = optuna.create_study(
             study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
+            direction="maximize" if scorer.greater_is_better else "minimize",
             sampler=sampler,
         )
         study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
+            lambda trial: self.objective(trial, X, y, scorer.score),
             timeout=timeout,
             n_jobs=1,
             callbacks=[LogWhenImproved()],
@@ -409,7 +408,7 @@ class XGBClassification(BaseModel):
         }
         return not_tuned_params
 
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, scorer):
         """
         Perform cross-validation to evaluate the model.
         Mean test score is returned.
@@ -447,9 +446,10 @@ class XGBClassification(BaseModel):
                 sample_weight=sample_weight,
             )
             y_pred = model.predict_proba(X.iloc[test_idx])
-            # print(y_pred)
+            if y_pred.ndim == 2 and y_pred.shape[1] == 2:
+                y_pred = y_pred[:, 1]
 
-            cv_metrics.append(metric(y[test_idx], y_pred))
+            cv_metrics.append(scorer.score(y[test_idx], y_pred))
             best_num_iterations.append(model.best_iteration)
 
         # add `n_estimators` to the optuna parameters
@@ -461,7 +461,7 @@ class XGBClassification(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=MSE(),
+        scorer=None,
         timeout=60,
         categorical_features=[],
     ):
@@ -486,11 +486,11 @@ class XGBClassification(BaseModel):
         # optimize parameters
         study = optuna.create_study(
             study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
+            direction="maximize" if scorer.greater_is_better else "minimize",
             sampler=sampler,
         )
         study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
+            lambda trial: self.objective(trial, X, y, scorer),
             timeout=timeout,
             n_jobs=1,
             callbacks=[LogWhenImproved()],

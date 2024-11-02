@@ -19,6 +19,8 @@ from .type_hints import FeaturesType, TargetType
 from .utils import convert_to_numpy, save_yaml
 from .xgboost import XGBClassification, XGBRegression
 
+from automl.metrics import get_scorer
+
 log = get_logger(__name__)
 
 
@@ -33,9 +35,9 @@ class AutoML:
         random_state: int = 42,
         tuning_timeout=60,
     ):
-
         self.task = task
         self.metric = metric
+        self.scorer = get_scorer(metric)
         self.time_series = time_series
         self.n_jobs = n_jobs
         self.random_state = random_state
@@ -270,7 +272,7 @@ class AutoML:
             model.tune(
                 X,
                 y,
-                metric=self.metric,
+                scorer=self.scorer,
                 timeout=self.tuning_timeout,
                 categorical_features=categorical_features,
             )
@@ -318,7 +320,7 @@ class AutoML:
 
             # compare current model with the best model
             # if metric is better -> new best model
-            if i == 0 or self.metric.is_better(test_scores, self.best_score):
+            if i == 0 or self.scorer.is_better(test_scores, self.best_score):
                 self.best_model = model
                 self.best_score = test_scores
                 log.info(
@@ -340,4 +342,8 @@ class AutoML:
         return y_pred
 
     def evaluate(self, y_true: TargetType, y_pred: TargetType):
-        return self.metric(y_true, y_pred)
+        if self.task == 'classification':
+            # binary classifiation
+            if len(np.unique(y_true)) <= 2:
+                return self.scorer.score(y_true, y_pred[:, 1])
+        return self.scorer.score(y_true, y_pred)

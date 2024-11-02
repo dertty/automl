@@ -7,7 +7,6 @@ from sklearn.model_selection import KFold, StratifiedKFold, TimeSeriesSplit
 
 from ...loggers import get_logger
 from ..base_model import BaseModel
-from ..metrics import MSE
 from ..type_hints import FeaturesType, TargetType
 from ..utils import LogWhenImproved, convert_to_numpy, convert_to_pandas
 
@@ -161,7 +160,7 @@ class CatBoostRegression(BaseModel):
             "allow_writing_files": self.allow_writing_files,
         }
 
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, scorer):
         cv = self.kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
@@ -182,7 +181,7 @@ class CatBoostRegression(BaseModel):
             model.fit(train_data, eval_set=test_data)
             y_pred = model.predict(test_data)
 
-            cv_metrics.append(metric(y[test_idx], y_pred))
+            cv_metrics.append(scorer.score(y[test_idx], y_pred))
             best_num_iterations.append(model.best_iteration_)
 
         # add `iterations`` to the optuna parameters
@@ -194,7 +193,7 @@ class CatBoostRegression(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=MSE(),
+        scorer=None,
         timeout=60,
         categorical_features=[],
     ):
@@ -211,11 +210,11 @@ class CatBoostRegression(BaseModel):
         # optimize parameters
         study = optuna.create_study(
             study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
+            direction="maximize" if scorer.greater_is_better else "minimize",
             sampler=sampler,
         )
         study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
+            lambda trial: self.objective(trial, X, y, scorer),
             timeout=timeout,
             n_jobs=1,
             callbacks=[LogWhenImproved()],
@@ -411,7 +410,7 @@ class CatBoostClassification(BaseModel):
             "allow_writing_files": self.allow_writing_files,
         }
 
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, scorer):
         cv = self.kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
@@ -432,7 +431,9 @@ class CatBoostClassification(BaseModel):
             model.fit(train_data, eval_set=test_data)
             y_pred = model.predict_proba(test_data)
 
-            cv_metrics.append(metric(y[test_idx], y_pred))
+            if y_pred.ndim == 2 and y_pred.shape[1] == 2:
+                y_pred = y_pred[:, 1]
+            cv_metrics.append(scorer.score(y[test_idx], y_pred))
             best_num_iterations.append(model.best_iteration_)
 
         # add `iterations` as an optuna parameters
@@ -444,7 +445,7 @@ class CatBoostClassification(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=MSE(),
+        scorer,
         timeout=60,
         categorical_features=[],
     ):
@@ -461,11 +462,11 @@ class CatBoostClassification(BaseModel):
         # optimize parameters
         study = optuna.create_study(
             study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
+            direction="maximize" if scorer.greater_is_better else "minimize",
             sampler=sampler,
         )
         study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
+            lambda trial: self.objective(trial, X, y, scorer),
             timeout=timeout,
             n_jobs=1,
             callbacks=[LogWhenImproved()],
