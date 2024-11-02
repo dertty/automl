@@ -6,6 +6,7 @@ from sklearn.metrics import mean_absolute_error
 from multiprocessing import cpu_count
 import numpy as np
 
+
 def lama_fit_predict(train_, test_, task_type, random_state, target_colname, metric_name, timeout=700):
     '''Обучение и предикт Lama.
         Args:
