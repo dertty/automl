@@ -14,19 +14,19 @@ class BaseMetric:
         self.model_type = None
         self.thr = None
 
-    def __call__(self, **kwargs):
+    def __call__(self, **kwargs) -> float:
         raise NotImplementedError
     
-    def _get_model_score_name(self):
+    def _get_model_score_name(self) -> str:
         raise NotImplementedError
     
-    def get_score_name(self):
+    def get_score_name(self) -> str:
         raise NotImplementedError
     
-    def set_thr(self, thr):
+    def set_thr(self, thr) -> None:
         self.thr = thr
 
-    def get_thr(self):
+    def get_thr(self) -> float:
         return self.thr
     
     def _get_scorer(self):
