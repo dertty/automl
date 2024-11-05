@@ -166,6 +166,8 @@ notebooks/datasets/
 datasets
 notebooks/mldata/
 mldata
+notebooks/ml_data/
+ml_data
 .devcontainer/devcontainer.json
 data
 catboost_info
