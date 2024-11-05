@@ -147,26 +147,26 @@ class AutoML:
                 ]
             elif self.task == "classification":
                 self.models_list = [
-                    # LogisticRegression(
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
-                    # RandomForestClassification(
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
-                    # ExtraTreesClassification(
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
-                    # CatBoostClassification(
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
+                    LogisticRegression(
+                        n_jobs=self.n_jobs,
+                        random_state=self.random_state,
+                        time_series=self.time_series,
+                    ),
+                    RandomForestClassification(
+                        n_jobs=self.n_jobs,
+                        random_state=self.random_state,
+                        time_series=self.time_series,
+                    ),
+                    ExtraTreesClassification(
+                        n_jobs=self.n_jobs,
+                        random_state=self.random_state,
+                        time_series=self.time_series,
+                    ),
+                    CatBoostClassification(
+                        n_jobs=self.n_jobs,
+                        random_state=self.random_state,
+                        time_series=self.time_series,
+                    ),
                     LightGBMClassification(
                         n_jobs=self.n_jobs,
                         random_state=self.random_state,
@@ -256,6 +256,7 @@ class AutoML:
         categorical_features=[],
         save_models=True,
         save_oof=True,
+        save_test=False,
     ) -> Self:
         """If self.time_series == True -> X should be sorted by time."""
 
@@ -299,15 +300,18 @@ class AutoML:
             oof_scores = self.evaluate(y[not_none_oof], oof_preds[not_none_oof])
             log.info(f"OOF: {oof_scores}", msg_type="score")
 
+            ys_pred = None
             if Xs_test is not None:
-                # predict on test and evaluate the model
+                # predict on test
                 ys_pred = model.predict(Xs_test)
-                test_scores = self.evaluate(ys_test, ys_pred)
-                log.info(f"Test: {test_scores}", msg_type="score")
-                log.info(
-                    f"Overfit: {(abs(test_scores - train_scores) / train_scores) * 100 :.2f} %",
-                    msg_type="score",
-                )
+                if ys_test is not None:
+                    # evaluate the model
+                    test_scores = self.evaluate(ys_test, ys_pred)
+                    log.info(f"Test: {test_scores}", msg_type="score")
+                    log.info(
+                        f"Overfit: {(abs(test_scores - train_scores) / train_scores) * 100 :.2f} %",
+                        msg_type="score",
+                    )
             else:
                 # No test data given
                 # Select the best model based on the oof
@@ -325,6 +329,11 @@ class AutoML:
                 # save oof predictions
                 pd.DataFrame(oof_preds[not_none_oof],
                              columns=[f"{model.name}_pred_{i}" for i in range(oof_preds.shape[1])]).to_csv(model_dir / f"oof_preds.csv", index=False)
+                
+            if save_test and ys_pred is not None:
+                # save test predictions
+                pd.DataFrame(ys_pred,
+                             columns=[f"{model.name}_pred_{i}" for i in range(ys_pred.shape[1])]).to_csv(model_dir / f"test_preds.csv", index=False)
 
             # save best model's parameters
             save_yaml(model.params, model_dir / f"{model.name}.yaml")
