@@ -77,7 +77,8 @@ class RocAuc(BaseMetric):
 
         return roc_auc_score(y_true, y_pred, multi_class=self.multi_class)
 
-    def get_score_name(self):
+    @staticmethod
+    def get_score_name():
         return 'roc_auc'
     
     def _get_scorer(self):

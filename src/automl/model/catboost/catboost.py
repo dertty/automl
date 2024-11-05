@@ -5,6 +5,7 @@ from catboost import CatBoostRegressor as CBReg
 from catboost import Pool
 from sklearn.model_selection import KFold, StratifiedKFold, TimeSeriesSplit
 
+from .metrics import get_eval_metric
 from ...loggers import get_logger
 from ..base_model import BaseModel
 from ..type_hints import FeaturesType, TargetType
@@ -35,7 +36,6 @@ class CatBoostRegression(BaseModel):
         random_state=42,
         time_series=False,
     ):
-
         self.name = "CatBoostRegression"
         self.cat_features = []
 
@@ -283,6 +283,7 @@ class CatBoostClassification(BaseModel):
         bootstrap_type=None,
         one_hot_max_size=10,
         auto_class_weights=None,
+        eval_metric=None,
         n_jobs=6,
         random_state=42,
         time_series=False,
@@ -306,6 +307,7 @@ class CatBoostClassification(BaseModel):
         self.min_data_in_leaf = min_data_in_leaf
         self.one_hot_max_size = one_hot_max_size
         self.auto_class_weights = auto_class_weights
+        self.eval_metric = eval_metric
 
         self.thread_count = n_jobs
         self.random_state = random_state
@@ -406,7 +408,6 @@ class CatBoostClassification(BaseModel):
             "thread_count": self.thread_count,
             "random_state": self.random_state,
             "verbose": self.verbose,
-            "od_wait": self.od_wait,
             "allow_writing_files": self.allow_writing_files,
         }
 
@@ -415,6 +416,8 @@ class CatBoostClassification(BaseModel):
 
         trial_params = self.get_trial_params(trial)
         not_tuned_params = self.get_not_tuned_params()
+        params = {**trial_params, **not_tuned_params}
+        params['eval_metric'] = get_eval_metric(scorer)
 
         cv_metrics = []
         best_num_iterations = []
@@ -490,28 +493,26 @@ class CatBoostClassification(BaseModel):
             y_pred += fold_model.predict_proba(X_test)
 
         y_pred = y_pred / len(self.models)
-        return y_pred
-
+        return y_pred    
+            
     @property
     def params(self):
         return {
+            **self.get_not_tuned_params(),
             "boosting_type": self.boosting_type,
-            "iterations": self.iterations,
-            "learning_rate": self.learning_rate,
             "max_leaves": self.max_leaves,
             "grow_policy": self.grow_policy,
             "depth": self.depth,
             "l2_leaf_reg": self.l2_leaf_reg,
             "model_size_reg": self.model_size_reg,
-            "od_wait": self.od_wait,
             "bootstrap_type": self.bootstrap_type,
             "rsm": self.rsm,
             "subsample": self.subsample,
             "min_data_in_leaf": self.min_data_in_leaf,
-            "one_hot_max_size": self.one_hot_max_size,
             "auto_class_weights": self.auto_class_weights,
-            "thread_count": self.thread_count,
-            "random_state": self.random_state,
             "verbose": self.verbose,
-            "allow_writing_files": self.allow_writing_files,
+            # deafult eval_metric': 'Logloss',
+            # available_metrics = ["Logloss", "CrossEntropy", "Precision", "Recall", "F", "F1", "BalancedAccuracy", "BalancedErrorRate", "MCC", "Accuracy", "CtrFactor", "AUC", "QueryAUC", "NormalizedGini", "BrierScore", "HingeLoss", "HammingLoss", "ZeroOneLoss", "Kappa", "WKappa", "LogLikelihoodOfPrediction"]
+            'eval_metric': self.eval_metric, 
+            # 'metric_period': 1, 
         }

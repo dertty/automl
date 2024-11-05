@@ -3,15 +3,19 @@ from sklearn.metrics import get_scorer_names, get_scorer as sk_get_scorer
 
 
 class ScorerWrapper:
-    def __init__(self, scorer, greater_is_better=True):
+    def __init__(self, scorer, greater_is_better: bool = True, metric_name: str = ''):
         self.scorer = scorer
         self.greater_is_better = greater_is_better
+        self.metric_name = metric_name
 
     def __call__(self, estimator, X, y):
         return self.scorer(estimator, X, y)
     
     def score(self, y, y_pred):
         return self.scorer._score_func(y, y_pred)
+    
+    def get_score_name(self):
+        return self.metric_name
     
     def is_better(self, val1, val2):
         if val1 is None or val2 is None:
@@ -56,7 +60,7 @@ def get_scorer(metric):
         all_scorers = get_scorer_names()
         if metric in all_scorers:
             scorer = sk_get_scorer(metric)
-            return ScorerWrapper(scorer, greater_is_better=True)
+            return ScorerWrapper(scorer, greater_is_better=True, metric_name=metric)
         else:
             raise ValueError(f"Metric name '{metric}' is not available. Check name or use custom metric")
     elif is_scorer(metric):
