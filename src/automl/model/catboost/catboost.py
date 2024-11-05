@@ -407,8 +407,11 @@ class CatBoostClassification(BaseModel):
             "thread_count": self.thread_count,
             "random_state": self.random_state,
             "verbose": self.verbose,
-            "od_wait": self.od_wait,
             "allow_writing_files": self.allow_writing_files,
+            "od_type": 'IncToDec',
+            "od_wait": self.od_wait,
+            "od_pval": 1e-3,
+            'use_best_model': True,
         }
 
     def objective(self, trial, X, y, metric):
@@ -494,23 +497,16 @@ class CatBoostClassification(BaseModel):
     @property
     def params(self):
         return {
+            **self.get_not_tuned_params(),
             "boosting_type": self.boosting_type,
-            "iterations": self.iterations,
-            "learning_rate": self.learning_rate,
             "max_leaves": self.max_leaves,
             "grow_policy": self.grow_policy,
             "depth": self.depth,
             "l2_leaf_reg": self.l2_leaf_reg,
             "model_size_reg": self.model_size_reg,
-            "od_wait": self.od_wait,
             "bootstrap_type": self.bootstrap_type,
             "rsm": self.rsm,
             "subsample": self.subsample,
             "min_data_in_leaf": self.min_data_in_leaf,
-            "one_hot_max_size": self.one_hot_max_size,
             "auto_class_weights": self.auto_class_weights,
-            "thread_count": self.thread_count,
-            "random_state": self.random_state,
-            "verbose": self.verbose,
-            "allow_writing_files": self.allow_writing_files,
         }
