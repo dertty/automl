@@ -61,7 +61,7 @@ class RocAuc(BaseMetric):
         if is_one_dimensional(y_pred):
             self.multi_class = 'raise'
             y_pred = y_pred.reshape(-1)
-            if not (np.max(y_pred <= 1) and np.min(y_pred >= 0)):
+            if not (np.max(y_pred) <= 1 and np.min(y_pred) >= 0):
                 # array of labels
                 raise ValueError(
                     "Predictions should contain probabilities for metric RocAuc."
