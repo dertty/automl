@@ -10,7 +10,7 @@ from ...loggers import get_logger
 from ..base_model import BaseModel
 from ..metrics import MSE
 from ..type_hints import FeaturesType, TargetType
-from ..utils import convert_to_pandas
+from ..utils import convert_to_pandas, seed_everything
 
 warnings.filterwarnings("ignore")
 
@@ -56,7 +56,7 @@ class TabularLamaNN(BaseModel):
         log.info(f"Fitting {self.name}", msg_type="start")
 
         self.categorical_features = categorical_features
-        np.random.seed(self.random_state)
+        seed_everything(self.random_state)
 
         X = convert_to_pandas(X)
         data = X.assign(target=y)

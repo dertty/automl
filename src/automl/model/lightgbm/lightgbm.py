@@ -1,3 +1,5 @@
+import warnings
+
 import lightgbm as lgb
 import numpy as np
 import optuna
@@ -273,7 +275,8 @@ class LightGBMClassification(BaseModel):
         n_jobs=6,
         random_state=42,
         time_series=False,
-    ):
+    ):  
+        warnings.filterwarnings("ignore") # TODO: remove warnings
 
         self.name = "LightGBMClassification"
 
