@@ -11,7 +11,7 @@ from ...loggers import get_logger
 from ..base_model import BaseModel
 from ..metrics import MSE
 from ..type_hints import FeaturesType, TargetType
-from ..utils import LogWhenImproved, convert_to_numpy, convert_to_pandas
+from ..utils import optuna_tune, convert_to_numpy, convert_to_pandas
 
 log = get_logger(__name__)
 
@@ -191,20 +191,7 @@ class XGBRegression(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        # seed sampler for reproducibility
-        sampler = optuna.samplers.TPESampler(seed=self.random_state)
-        # optimize parameters
-        study = optuna.create_study(
-            study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
-            sampler=sampler,
-        )
-        study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
-            timeout=timeout,
-            n_jobs=1,
-            callbacks=[LogWhenImproved()],
-        )
+        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -232,9 +219,7 @@ class XGBRegression(BaseModel):
     @property
     def params(self):
         return {
-            "objective": self.objective_type,
-            "n_estimators": self.n_estimators,
-            "learning_rate": self.learning_rate,
+            **self.get_not_tuned_params(),
             "max_depth": self.max_depth,
             "max_leaves": self.max_leaves,
             "grow_policy": self.grow_policy,
@@ -245,12 +230,6 @@ class XGBRegression(BaseModel):
             "colsample_bylevel": self.colsample_bylevel,
             "reg_lambda": self.reg_lambda,
             "reg_alpha": self.reg_alpha,
-            "enable_categorical": self.enable_categorical,
-            "max_cat_to_onehot": self.max_cat_to_onehot,
-            "n_jobs": self.n_jobs,
-            "random_state": self.random_state,
-            "verbosity": self.verbosity,
-            "early_stopping_rounds": self.early_stopping_rounds,
         }
 
 
@@ -481,20 +460,7 @@ class XGBClassification(BaseModel):
         if self.n_classes > 2:
             self.objective_type = "multi:softmax"
 
-        # seed sampler for reproducibility
-        sampler = optuna.samplers.TPESampler(seed=self.random_state)
-        # optimize parameters
-        study = optuna.create_study(
-            study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
-            sampler=sampler,
-        )
-        study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
-            timeout=timeout,
-            n_jobs=1,
-            callbacks=[LogWhenImproved()],
-        )
+        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -522,9 +488,7 @@ class XGBClassification(BaseModel):
     @property
     def params(self):
         return {
-            "objective": self.objective_type,
-            "n_estimators": self.n_estimators,
-            "learning_rate": self.learning_rate,
+            **self.get_not_tuned_params(),
             "max_depth": self.max_depth,
             "max_leaves": self.max_leaves,
             "grow_policy": self.grow_policy,
@@ -535,11 +499,5 @@ class XGBClassification(BaseModel):
             "colsample_bylevel": self.colsample_bylevel,
             "reg_lambda": self.reg_lambda,
             "reg_alpha": self.reg_alpha,
-            "enable_categorical": self.enable_categorical,
-            "max_cat_to_onehot": self.max_cat_to_onehot,
-            "n_jobs": self.n_jobs,
-            "random_state": self.random_state,
-            "verbosity": self.verbosity,
-            "early_stopping_rounds": self.early_stopping_rounds,
             "class_weight": self.class_weight,
         }

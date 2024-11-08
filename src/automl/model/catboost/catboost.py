@@ -9,7 +9,7 @@ from ...loggers import get_logger
 from ..base_model import BaseModel
 from ..metrics import MSE
 from ..type_hints import FeaturesType, TargetType
-from ..utils import LogWhenImproved, convert_to_numpy, convert_to_pandas
+from ..utils import optuna_tune, convert_to_numpy, convert_to_pandas
 
 log = get_logger(__name__)
 
@@ -35,6 +35,7 @@ class CatBoostRegression(BaseModel):
         n_jobs=6,
         random_state=42,
         time_series=False,
+        od_type='Iter',
     ):
 
         self.name = "CatBoostRegression"
@@ -55,7 +56,8 @@ class CatBoostRegression(BaseModel):
         self.subsample = subsample
         self.min_data_in_leaf = min_data_in_leaf
         self.one_hot_max_size = one_hot_max_size
-
+        self.od_type = od_type
+        
         self.thread_count = n_jobs
         self.random_state = random_state
         self.verbose = False
@@ -150,16 +152,23 @@ class CatBoostRegression(BaseModel):
         return param_distr
 
     def get_not_tuned_params(self):
-        return {
+        not_tuned_params = {
             "iterations": 2000,
             "one_hot_max_size": self.one_hot_max_size,
             "learning_rate": self.learning_rate,
             "thread_count": self.thread_count,
             "random_state": self.random_state,
             "verbose": self.verbose,
-            "od_wait": self.od_wait,
             "allow_writing_files": self.allow_writing_files,
+            "od_type": self.od_type,
+            "od_wait": self.od_wait,
+            'use_best_model': True,
         }
+        if not_tuned_params.get('od_type', 'Iter') == 'Iter':
+            not_tuned_params["od_pval"] = 0
+        else:
+            not_tuned_params["od_pval"] = 1e-5
+        return not_tuned_params
 
     def objective(self, trial, X, y, metric):
         cv = self.kf.split(X, y)
@@ -206,20 +215,7 @@ class CatBoostRegression(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        # seed sampler for reproducibility
-        sampler = optuna.samplers.TPESampler(seed=self.random_state)
-        # optimize parameters
-        study = optuna.create_study(
-            study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
-            sampler=sampler,
-        )
-        study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
-            timeout=timeout,
-            n_jobs=1,
-            callbacks=[LogWhenImproved()],
-        )
+        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -244,25 +240,18 @@ class CatBoostRegression(BaseModel):
     @property
     def params(self):
         return {
+            **self.get_not_tuned_params(),
             "boosting_type": self.boosting_type,
-            "iterations": self.iterations,
-            "learning_rate": self.learning_rate,
             "max_leaves": self.max_leaves,
             "loss_function": self.loss_function,
             "grow_policy": self.grow_policy,
             "depth": self.depth,
             "l2_leaf_reg": self.l2_leaf_reg,
             "model_size_reg": self.model_size_reg,
-            "od_wait": self.od_wait,
             "bootstrap_type": self.bootstrap_type,
             "rsm": self.rsm,
             "subsample": self.subsample,
             "min_data_in_leaf": self.min_data_in_leaf,
-            "one_hot_max_size": self.one_hot_max_size,
-            "thread_count": self.thread_count,
-            "random_state": self.random_state,
-            "verbose": self.verbose,
-            "allow_writing_files": self.allow_writing_files,
         }
 
 
@@ -287,6 +276,7 @@ class CatBoostClassification(BaseModel):
         n_jobs=6,
         random_state=42,
         time_series=False,
+        od_type='Iter',
     ):
 
         self.name = "CatBoostClassification"
@@ -307,7 +297,8 @@ class CatBoostClassification(BaseModel):
         self.min_data_in_leaf = min_data_in_leaf
         self.one_hot_max_size = one_hot_max_size
         self.auto_class_weights = auto_class_weights
-
+        self.od_type = od_type
+        
         self.thread_count = n_jobs
         self.random_state = random_state
         self.verbose = False
@@ -400,7 +391,7 @@ class CatBoostClassification(BaseModel):
         return param_distr
 
     def get_not_tuned_params(self):
-        return {
+        not_tuned_params = {
             "iterations": 2000,
             "one_hot_max_size": self.one_hot_max_size,
             "learning_rate": self.learning_rate,
@@ -408,11 +399,15 @@ class CatBoostClassification(BaseModel):
             "random_state": self.random_state,
             "verbose": self.verbose,
             "allow_writing_files": self.allow_writing_files,
-            "od_type": 'IncToDec',
+            "od_type": self.od_type,
             "od_wait": self.od_wait,
-            "od_pval": 1e-3,
             'use_best_model': True,
         }
+        if not_tuned_params.get('od_type', 'Iter') == 'Iter':
+            not_tuned_params["od_pval"] = 0
+        else:
+            not_tuned_params["od_pval"] = 1e-5
+        return not_tuned_params
 
     def objective(self, trial, X, y, metric):
         cv = self.kf.split(X, y)
@@ -459,20 +454,7 @@ class CatBoostClassification(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        # seed sampler for reproducibility
-        sampler = optuna.samplers.TPESampler(seed=self.random_state)
-        # optimize parameters
-        study = optuna.create_study(
-            study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
-            sampler=sampler,
-        )
-        study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
-            timeout=timeout,
-            n_jobs=1,
-            callbacks=[LogWhenImproved()],
-        )
+        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
 
         # set best parameters
         for key, val in study.best_params.items():

@@ -13,7 +13,7 @@ from ...loggers import get_logger
 from ..base_model import BaseModel
 from ..metrics import MSE, RocAuc
 from ..type_hints import FeaturesType, TargetType
-from ..utils import LogWhenImproved, convert_to_numpy
+from ..utils import optuna_tune, convert_to_numpy
 
 log = get_logger(__name__)
 
@@ -143,20 +143,7 @@ class RandomForestRegression(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        # seed sampler for reproducibility
-        sampler = optuna.samplers.TPESampler(seed=self.random_state)
-        # optimize parameters
-        study = optuna.create_study(
-            study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
-            sampler=sampler,
-        )
-        study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
-            timeout=timeout,
-            n_jobs=1,
-            callbacks=[LogWhenImproved()],
-        )
+        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -180,6 +167,7 @@ class RandomForestRegression(BaseModel):
     @property
     def params(self):
         return {
+            **self.get_not_tuned_params(),
             "n_estimators": self.n_estimators,
             "criterion": self.criterion,
             "max_depth": self.max_depth,
@@ -189,8 +177,6 @@ class RandomForestRegression(BaseModel):
             "bootstrap": self.bootstrap,
             "oob_score": self.oob_score,
             "max_samples": self.max_samples,
-            "n_jobs": self.n_jobs,
-            "random_state": self.random_state,
         }
 
 
@@ -331,20 +317,7 @@ class RandomForestClassification(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        # seed sampler for reproducibility
-        sampler = optuna.samplers.TPESampler(seed=self.random_state)
-        # optimize parameters
-        study = optuna.create_study(
-            study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
-            sampler=sampler,
-        )
-        study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
-            timeout=timeout,
-            n_jobs=1,
-            callbacks=[LogWhenImproved()],
-        )
+        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -368,6 +341,7 @@ class RandomForestClassification(BaseModel):
     @property
     def params(self):
         return {
+            **self.get_not_tuned_params(),
             "n_estimators": self.n_estimators,
             "criterion": self.criterion,
             "max_depth": self.max_depth,
@@ -377,7 +351,5 @@ class RandomForestClassification(BaseModel):
             "bootstrap": self.bootstrap,
             "oob_score": self.oob_score,
             "max_samples": self.max_samples,
-            "n_jobs": self.n_jobs,
-            "random_state": self.random_state,
             "class_weight": self.class_weight,
         }

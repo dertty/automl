@@ -7,7 +7,8 @@ from ...loggers import get_logger
 from ..base_model import BaseModel
 from ..metrics import MSE
 from ..type_hints import FeaturesType, TargetType
-from ..utils import LogWhenImproved, convert_to_numpy, convert_to_pandas
+from ..utils import optuna_tune, convert_to_numpy, convert_to_pandas
+
 
 log = get_logger(__name__)
 
@@ -193,20 +194,7 @@ class LightGBMRegression(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        # seed sampler for reproducibility
-        sampler = optuna.samplers.TPESampler(seed=self.random_state)
-        # optimize parameters
-        study = optuna.create_study(
-            study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
-            sampler=sampler,
-        )
-        study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
-            timeout=timeout,
-            n_jobs=1,
-            callbacks=[LogWhenImproved()],
-        )
+        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -231,23 +219,17 @@ class LightGBMRegression(BaseModel):
     @property
     def params(self):
         return {
+            **self.get_not_tuned_params(),
             "objective_type": self.objective_type,
-            "boosting": self.boosting,
-            "num_iterations": self.num_iterations,
             "max_depth": self.max_depth,
-            "learning_rate": self.learning_rate,
             "num_leaves": self.num_leaves,
             "min_data_in_leaf": self.min_data_in_leaf,
             "bagging_fraction": self.bagging_fraction,
             "bagging_freq": self.bagging_freq,
             "feature_fraction": self.feature_fraction,
-            "early_stopping_round": self.early_stopping_round,
             "lambda_l1": self.lambda_l1,
             "lambda_l2": self.lambda_l2,
             "min_gain_to_split": self.min_gain_to_split,
-            "num_threads": self.num_threads,
-            "random_state": self.random_state,
-            "verbose": self.verbose,
         }
 
 
@@ -479,20 +461,7 @@ class LightGBMClassification(BaseModel):
         if self.n_classes > 2:
             self.objective_type = "multiclass"
 
-        # seed sampler for reproducibility
-        sampler = optuna.samplers.TPESampler(seed=self.random_state)
-        # optimize parameters
-        study = optuna.create_study(
-            study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
-            sampler=sampler,
-        )
-        study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
-            timeout=timeout,
-            n_jobs=1,
-            callbacks=[LogWhenImproved()],
-        )
+        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -517,25 +486,17 @@ class LightGBMClassification(BaseModel):
     @property
     def params(self):
         params = {
-            "objective_type": self.objective_type,
-            "boosting": self.boosting,
-            "num_iterations": self.num_iterations,
+            **self.get_not_tuned_params(),
             "max_depth": self.max_depth,
-            "learning_rate": self.learning_rate,
             "num_leaves": self.num_leaves,
             "min_data_in_leaf": self.min_data_in_leaf,
             "bagging_fraction": self.bagging_fraction,
             "bagging_freq": self.bagging_freq,
             "feature_fraction": self.feature_fraction,
-            "early_stopping_round": self.early_stopping_round,
             "lambda_l1": self.lambda_l1,
             "lambda_l2": self.lambda_l2,
             "min_gain_to_split": self.min_gain_to_split,
-            "num_threads": self.num_threads,
-            "random_state": self.random_state,
             "is_unbalance": self.is_unbalance,
-            "num_classes": 1 if self.n_classes == 2 else self.n_classes,
-            "verbose": self.verbose,
         }
 
         # add parameter `class_weight` for multiclass only
