@@ -249,7 +249,12 @@ class CatBoostRegression(BaseModel):
             
             folds.append([self.tmp_dir / f'train_data_{i}', self.tmp_dir / f'test_data{i}', train_idx, test_idx])
             
-        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state, folds=folds)
+        study = optuna_tune(
+            name=self.name, 
+            objective=self.objective, 
+            X=X, y=y, 
+            metric=metric, timeout=timeout, random_state=self.random_state, 
+            folds=folds)
 
         # set best parameters
         for key, val in study.best_params.items():
