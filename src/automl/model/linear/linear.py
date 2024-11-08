@@ -172,6 +172,7 @@ class LogisticRegression(BaseModel):
         metric=None,
         timeout=None,
         categorical_features=[],
+        mode: str='fast',
     ):
         log.info(f"Tuning {self.name}", msg_type="start")
 
@@ -197,45 +198,48 @@ class LogisticRegression(BaseModel):
         Cs = logistic_cv.C_
         # log.info(f"Choosing from {Cs}", msg_type="best_params")
 
-        # iterate over all found Cs and find the one maximizing the metric
-        best_metric = None
-        best_C = None
-        for i, C in enumerate(Cs):
-            cv = self.kf.split(X, y)
+        if len(Cs) > 1:
+            # iterate over all found Cs and find the one maximizing the metric
+            best_metric = None
+            best_C = None
+            for i, C in enumerate(Cs):
+                cv = self.kf.split(X, y)
 
-            # initialzie the model
-            model = LogRegSklearn(
-                C=C,
-                class_weight=self.class_weight,
-                max_iter=self.max_iter,
-                n_jobs=self.n_jobs,
-                random_state=self.random_state,
-            )
-
-            # suppress annoying sklearn ConvergenceWarning
-            with SuppressWarnings():
-                # cross validate the model
-                scores = cross_validate(
-                    model,
-                    X,
-                    y,
-                    scoring=metric.get_scorer(),
-                    cv=cv,
+                # initialzie the model
+                model = LogRegSklearn(
+                    C=C,
+                    class_weight=self.class_weight,
+                    max_iter=self.max_iter,
+                    n_jobs=self.n_jobs,
+                    random_state=self.random_state,
                 )
 
-            # if not `greater_is_better` the scores will be negaitive
-            # multiply by the `sign` to always return positive score
-            sign = 1
-            if not metric.greater_is_better:
-                sign = -1
+                # suppress annoying sklearn ConvergenceWarning
+                with SuppressWarnings():
+                    # cross validate the model
+                    scores = cross_validate(
+                        model,
+                        X,
+                        y,
+                        scoring=metric.get_scorer(),
+                        cv=cv,
+                    )
 
-            iter_metric = sign * np.mean(scores["test_score"])
-            # compare iter metric with the best metric
-            if i == 0 or metric.is_better(iter_metric, best_metric):
-                best_metric = iter_metric
-                best_C = C
+                # if not `greater_is_better` the scores will be negaitive
+                # multiply by the `sign` to always return positive score
+                sign = 1
+                if not metric.greater_is_better:
+                    sign = -1
 
-        self.C = float(best_C)
+                iter_metric = sign * np.mean(scores["test_score"])
+                # compare iter metric with the best metric
+                if i == 0 or metric.is_better(iter_metric, best_metric):
+                    best_metric = iter_metric
+                    best_C = C
+            self.C = float(best_C)
+        else:
+            # binary classification
+            self.C = Cs[0]
 
         log.info(f"{self.params}", msg_type="best_params")
         log.info(f"Tuning {self.name}", msg_type="end")
