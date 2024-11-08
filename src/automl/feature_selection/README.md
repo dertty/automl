@@ -44,17 +44,5 @@
 - Метод выделяет набор признаков, при котором достигается наиболее высокое значение метрики.
 # Использование репозитория
 Обучение моделей для обработки данных происходит строго на тренировочных данных, чтобы избежать утечки данных из теста.
-Примерный Pipeline:
-1) Удаление дублей; 
-2) Train test split;
-3) Удаление признаков с большой долей пропущенных значений;
-4) Заполнение пропусков;
-5) Кодирование категориальных признаков;
-6) Удаление константных и квазиконстантных признаков;
-7) Обработка выбросов;
-8) Корреляционный тест;
-9) Adversarial тест;
-10) PSI тест; 
-11) RFE;
 
-[Tutorial](https://df-bitbucket.ca.sbrf.ru/projects/DS_KB_DRKB/repos/automl/browse/FeatureSelection/R%26D.ipynb?at=refs%2Fheads%2Ffeature_selection)
+[Tutorial](https://github.com/dertty/automl/blob/feature_selection_dev/notebooks/feature_selection_example.ipynb)
