@@ -3,8 +3,8 @@ import numpy as np
 import optuna
 from sklearn.model_selection import KFold, StratifiedKFold, TimeSeriesSplit
 
+from ...loggers import get_logger
 from ..base_model import BaseModel
-from ..loggers import get_logger
 from ..metrics import MSE
 from ..type_hints import FeaturesType, TargetType
 from ..utils import LogWhenImproved, convert_to_numpy, convert_to_pandas

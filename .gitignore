@@ -167,3 +167,4 @@ datasets
 notebooks/mldata/
 mldata
 .devcontainer/devcontainer.json
+data

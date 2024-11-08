@@ -9,8 +9,8 @@ from lightautoml.tasks import Task
 from lightautoml.validation.np_iterators import TimeSeriesIterator
 from torch import set_num_threads as set_num_threads_torch
 
+from ...loggers import get_logger
 from ..base_model import BaseModel
-from ..loggers import get_logger
 from ..metrics import MSE
 from ..type_hints import FeaturesType, TargetType
 from ..utils import convert_to_pandas
