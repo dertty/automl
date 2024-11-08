@@ -22,7 +22,7 @@ class CatBoostRegression(BaseModel):
     def __init__(
         self,
         boosting_type="Ordered",
-        iterations=None,
+        iterations=2000,
         learning_rate=0.03,
         max_leaves=None,
         loss_function=None,
@@ -72,6 +72,8 @@ class CatBoostRegression(BaseModel):
             self.kf = TimeSeriesSplit(n_splits=5)
         else:
             self.kf = KFold(n_splits=5, random_state=self.random_state, shuffle=True)
+            
+        self.tmp_dir = Path(tempfile.mkdtemp())
 
     def fit(self, X: FeaturesType, y: TargetType, categorical_features=[]):
         log.info(f"Fitting {self.name}", msg_type="start")
@@ -157,7 +159,7 @@ class CatBoostRegression(BaseModel):
 
     def get_not_tuned_params(self):
         not_tuned_params = {
-            "iterations": 2000,
+            "iterations": self.iterations,
             "one_hot_max_size": self.one_hot_max_size,
             "learning_rate": self.learning_rate,
             "thread_count": self.thread_count,
@@ -174,28 +176,44 @@ class CatBoostRegression(BaseModel):
             not_tuned_params["od_pval"] = 1e-5
         return not_tuned_params
 
-    def objective(self, trial, X, y, metric):
-        cv = self.kf.split(X, y)
-
+    def objective(self, trial, X, y, metric, **kwargs):
         trial_params = self.get_trial_params(trial)
         not_tuned_params = self.get_not_tuned_params()
 
         cv_metrics = []
         best_num_iterations = []
-        for train_idx, test_idx in cv:
-            train_data = Pool(X.iloc[train_idx], y[train_idx], cat_features=self.cat_features
-            )
-            test_data = Pool(
-                X.iloc[test_idx], y[test_idx], cat_features=self.cat_features
-            )
+        if 'folds' in kwargs:
+            for train_idx_path, test_idx_path, train_idx, test_idx in kwargs['folds']:
+                if train_idx_path.exists():
+                    train_data = Pool(data='quantized://' + str(train_idx_path))
+                else:
+                    train_data = Pool(X.iloc[train_idx], y[train_idx], cat_features=self.cat_features)
+                    
+                test_data = Pool(X.iloc[test_idx], y[test_idx], cat_features=self.cat_features)
+                if test_idx_path.exists():
+                    eval_data = Pool(data='quantized://' + str(test_idx_path))
+                else:
+                    eval_data = test_data
+                
+                model = CBClass(**trial_params, **not_tuned_params)
 
-            model = CBReg(**trial_params, **not_tuned_params)
+                model.fit(train_data, eval_set=eval_data)
+                y_pred = model.predict_proba(test_data)
 
-            model.fit(train_data, eval_set=test_data)
-            y_pred = model.predict(test_data)
+                cv_metrics.append(metric(y[test_idx], y_pred))
+                best_num_iterations.append(model.best_iteration_)
+        else:
+            for train_idx, test_idx in self.kf.split(X, y):
+                train_data = Pool(X.iloc[train_idx], y[train_idx], cat_features=self.cat_features)
+                test_data = Pool(X.iloc[test_idx], y[test_idx], cat_features=self.cat_features)
 
-            cv_metrics.append(metric(y[test_idx], y_pred))
-            best_num_iterations.append(model.best_iteration_)
+                model = CBClass(**trial_params, **not_tuned_params)
+
+                model.fit(train_data, eval_set=test_data)
+                y_pred = model.predict_proba(test_data)
+
+                cv_metrics.append(metric(y[test_idx], y_pred))
+                best_num_iterations.append(model.best_iteration_)
 
         # add `iterations`` to the optuna parameters
         trial.set_user_attr("iterations", round(np.mean(best_num_iterations)))
@@ -217,8 +235,21 @@ class CatBoostRegression(BaseModel):
         X = convert_to_pandas(X)
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
-
-        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
+        cv = self.kf.split(X, y)
+        
+        folds = []
+        for i, (train_idx, test_idx) in enumerate(cv):
+            train_data = Pool(X.iloc[train_idx], y[train_idx], cat_features=self.cat_features)
+            test_data = Pool(X.iloc[test_idx], y[test_idx], cat_features=self.cat_features)
+            train_data.quantize()
+            test_data.quantize()
+            
+            train_data.save(self.tmp_dir / f'train_data_{i}')
+            test_data.save(self.tmp_dir / f'test_data{i}')
+            
+            folds.append([self.tmp_dir / f'train_data_{i}', self.tmp_dir / f'test_data{i}', train_idx, test_idx])
+            
+        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state, folds=folds)
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -256,13 +287,18 @@ class CatBoostRegression(BaseModel):
             "subsample": self.subsample,
             "min_data_in_leaf": self.min_data_in_leaf,
         }
+        
+    def __del__(self):
+        # Удаляем временную папку и её содержимое
+        if self.tmp_dir.exists():
+            shutil.rmtree(self.tmp_dir)
 
 
 class CatBoostClassification(BaseModel):
     def __init__(
         self,
         boosting_type="Ordered",
-        iterations=None,
+        iterations=2000,
         learning_rate=0.03,
         max_leaves=None,
         depth=None,
@@ -370,7 +406,7 @@ class CatBoostClassification(BaseModel):
                 "bootstrap_type",
                 [
                     "Bernoulli",
-                    "MVS",
+                    "MVS", # более быстрый
                 ],
             ),
             "grow_policy": trial.suggest_categorical(
@@ -397,7 +433,7 @@ class CatBoostClassification(BaseModel):
 
     def get_not_tuned_params(self):
         not_tuned_params = {
-            "iterations": 2000,
+            "iterations": self.iterations,
             "one_hot_max_size": self.one_hot_max_size,
             "learning_rate": self.learning_rate,
             "thread_count": self.thread_count,
@@ -422,20 +458,28 @@ class CatBoostClassification(BaseModel):
 
         cv_metrics = []
         best_num_iterations = []
-        if 'cv' in kwargs:
-            for train_idx_path, test_idx_path in kwargs['cv']:
-                train_data = Pool(data='quantized://' + train_idx_path)
-                test_data = Pool(data='quantized://' + test_idx_path)
+        if 'folds' in kwargs:
+            for train_idx_path, test_idx_path, train_idx, test_idx in kwargs['folds']:
+                if train_idx_path.exists():
+                    train_data = Pool(data='quantized://' + str(train_idx_path))
+                else:
+                    train_data = Pool(X.iloc[train_idx], y[train_idx], cat_features=self.cat_features)
+                    
+                test_data = Pool(X.iloc[test_idx], y[test_idx], cat_features=self.cat_features)
+                if test_idx_path.exists():
+                    eval_data = Pool(data='quantized://' + str(test_idx_path))
+                else:
+                    eval_data = test_data
                 
                 model = CBClass(**trial_params, **not_tuned_params)
 
-                model.fit(train_data, eval_set=test_data)
+                model.fit(train_data, eval_set=eval_data)
                 y_pred = model.predict_proba(test_data)
 
                 cv_metrics.append(metric(y[test_idx], y_pred))
                 best_num_iterations.append(model.best_iteration_)
         else:
-            for train_idx, test_idx in X:
+            for train_idx, test_idx in self.kf.split(X, y):
                 train_data = Pool(X.iloc[train_idx], y[train_idx], cat_features=self.cat_features)
                 test_data = Pool(X.iloc[test_idx], y[test_idx], cat_features=self.cat_features)
 
@@ -469,7 +513,7 @@ class CatBoostClassification(BaseModel):
         y = y.reshape(y.shape[0])
 
         cv = self.kf.split(X, y)
-        folds_path = []
+        folds = []
         for i, (train_idx, test_idx) in enumerate(cv):
             train_data = Pool(X.iloc[train_idx], y[train_idx], cat_features=self.cat_features)
             test_data = Pool(X.iloc[test_idx], y[test_idx], cat_features=self.cat_features)
@@ -479,15 +523,15 @@ class CatBoostClassification(BaseModel):
             train_data.save(self.tmp_dir / f'train_data_{i}')
             test_data.save(self.tmp_dir / f'test_data{i}')
             
-            folds_path.append([self.tmp_dir / f'train_data_{i}', self.tmp_dir / f'test_data{i}'])
+            folds.append([self.tmp_dir / f'train_data_{i}', self.tmp_dir / f'test_data{i}', train_idx, test_idx])
             
         study = optuna_tune(
             name=self.name, 
             objective=self.objective, 
-            X=cv, y=y, 
+            X=X, y=y, 
             metric=metric, 
             timeout=timeout, 
-            random_state=self.random_state, cv=folds_path)
+            random_state=self.random_state, folds=folds)
 
         # set best parameters
         for key, val in study.best_params.items():

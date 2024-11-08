@@ -46,7 +46,8 @@ class EarlyStoppingCallback(object):
             self._operator = operator.gt
             self._score = -np.inf
         else:
-            print('@@', 'error')
+            # maximize by default
+            self._operator = operator.gt
             ValueError(f"invalid direction: {direction}")
 
     def __call__(self, study: optuna.Study, trial: optuna.Trial) -> None:
