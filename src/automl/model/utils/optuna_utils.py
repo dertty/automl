@@ -65,6 +65,7 @@ class EarlyStoppingCallback(object):
 def optuna_tune(name, objective, X, y, metric, 
                 timeout=60, random_state=0, 
                 early_stopping_rounds=100, threshold=1e-4,
+                **kwargs
                 ):
     # seed sampler for reproducibility
     sampler = optuna.samplers.TPESampler(seed=random_state)
@@ -76,7 +77,7 @@ def optuna_tune(name, objective, X, y, metric,
         sampler=sampler,
     )
     study.optimize(
-        lambda trial: objective(trial, X, y, metric),
+        lambda trial: objective(trial, X, y, metric, **kwargs),
         timeout=timeout,
         n_jobs=1,
         callbacks=[

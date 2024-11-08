@@ -1,8 +1,12 @@
+import tempfile
+import shutil
+from pathlib import Path
 import numpy as np
-import optuna
+
 from catboost import CatBoostClassifier as CBClass
 from catboost import CatBoostRegressor as CBReg
 from catboost import Pool
+
 from sklearn.model_selection import KFold, StratifiedKFold, TimeSeriesSplit
 
 from ...loggers import get_logger
@@ -179,8 +183,7 @@ class CatBoostRegression(BaseModel):
         cv_metrics = []
         best_num_iterations = []
         for train_idx, test_idx in cv:
-            train_data = Pool(
-                X.iloc[train_idx], y[train_idx], cat_features=self.cat_features
+            train_data = Pool(X.iloc[train_idx], y[train_idx], cat_features=self.cat_features
             )
             test_data = Pool(
                 X.iloc[test_idx], y[test_idx], cat_features=self.cat_features
@@ -311,6 +314,8 @@ class CatBoostClassification(BaseModel):
             self.kf = StratifiedKFold(
                 n_splits=5, random_state=self.random_state, shuffle=True
             )
+        
+        self.tmp_dir = Path(tempfile.mkdtemp())
 
     def fit(self, X: FeaturesType, y: TargetType, categorical_features=[]):
         log.info(f"Fitting {self.name}", msg_type="start")
@@ -409,7 +414,7 @@ class CatBoostClassification(BaseModel):
             not_tuned_params["od_pval"] = 1e-5
         return not_tuned_params
 
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, metric, **kwargs):
         cv = self.kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
@@ -417,21 +422,30 @@ class CatBoostClassification(BaseModel):
 
         cv_metrics = []
         best_num_iterations = []
-        for train_idx, test_idx in cv:
-            train_data = Pool(
-                X.iloc[train_idx], y[train_idx], cat_features=self.cat_features
-            )
-            test_data = Pool(
-                X.iloc[test_idx], y[test_idx], cat_features=self.cat_features
-            )
+        if 'cv' in kwargs:
+            for train_idx_path, test_idx_path in kwargs['cv']:
+                train_data = Pool(data='quantized://' + train_idx_path)
+                test_data = Pool(data='quantized://' + test_idx_path)
+                
+                model = CBClass(**trial_params, **not_tuned_params)
 
-            model = CBClass(**trial_params, **not_tuned_params)
+                model.fit(train_data, eval_set=test_data)
+                y_pred = model.predict_proba(test_data)
 
-            model.fit(train_data, eval_set=test_data)
-            y_pred = model.predict_proba(test_data)
+                cv_metrics.append(metric(y[test_idx], y_pred))
+                best_num_iterations.append(model.best_iteration_)
+        else:
+            for train_idx, test_idx in X:
+                train_data = Pool(X.iloc[train_idx], y[train_idx], cat_features=self.cat_features)
+                test_data = Pool(X.iloc[test_idx], y[test_idx], cat_features=self.cat_features)
 
-            cv_metrics.append(metric(y[test_idx], y_pred))
-            best_num_iterations.append(model.best_iteration_)
+                model = CBClass(**trial_params, **not_tuned_params)
+
+                model.fit(train_data, eval_set=test_data)
+                y_pred = model.predict_proba(test_data)
+
+                cv_metrics.append(metric(y[test_idx], y_pred))
+                best_num_iterations.append(model.best_iteration_)
 
         # add `iterations` as an optuna parameters
         trial.set_user_attr("iterations", round(np.mean(best_num_iterations)))
@@ -454,7 +468,26 @@ class CatBoostClassification(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
+        cv = self.kf.split(X, y)
+        folds_path = []
+        for i, (train_idx, test_idx) in enumerate(cv):
+            train_data = Pool(X.iloc[train_idx], y[train_idx], cat_features=self.cat_features)
+            test_data = Pool(X.iloc[test_idx], y[test_idx], cat_features=self.cat_features)
+            train_data.quantize()
+            test_data.quantize()
+            
+            train_data.save(self.tmp_dir / f'train_data_{i}')
+            test_data.save(self.tmp_dir / f'test_data{i}')
+            
+            folds_path.append([self.tmp_dir / f'train_data_{i}', self.tmp_dir / f'test_data{i}'])
+            
+        study = optuna_tune(
+            name=self.name, 
+            objective=self.objective, 
+            X=cv, y=y, 
+            metric=metric, 
+            timeout=timeout, 
+            random_state=self.random_state, cv=folds_path)
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -492,3 +525,8 @@ class CatBoostClassification(BaseModel):
             "min_data_in_leaf": self.min_data_in_leaf,
             "auto_class_weights": self.auto_class_weights,
         }
+
+    def __del__(self):
+        # Удаляем временную папку и её содержимое
+        if self.tmp_dir.exists():
+            shutil.rmtree(self.tmp_dir)

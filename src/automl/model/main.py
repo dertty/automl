@@ -145,97 +145,97 @@ class AutoML:
                 ]
             elif self.task == "classification":
                 self.models_list = [
-                    LogisticRegression(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    RandomForestClassification(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    ExtraTreesClassification(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
+                    # LogisticRegression(
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # RandomForestClassification(
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # ExtraTreesClassification(
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
                     CatBoostClassification(
                         n_jobs=self.n_jobs,
                         random_state=self.random_state,
                         time_series=self.time_series,
                     ),
-                    LightGBMClassification(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    XGBClassification(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLama(
-                        task="classification",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaUtilized(
-                        task="classification",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="classification",
-                        nn_name="mlp",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="classification",
-                        nn_name="denselight",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="classification",
-                        nn_name="dense",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="classification",
-                        nn_name="resnet",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="classification",
-                        nn_name="node",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="classification",
-                        nn_name="autoint",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="classification",
-                        nn_name="fttransformer",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
+                    # LightGBMClassification(
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # XGBClassification(
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLama(
+                    #     task="classification",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaUtilized(
+                    #     task="classification",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaNN(
+                    #     task="classification",
+                    #     nn_name="mlp",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaNN(
+                    #     task="classification",
+                    #     nn_name="denselight",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaNN(
+                    #     task="classification",
+                    #     nn_name="dense",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaNN(
+                    #     task="classification",
+                    #     nn_name="resnet",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaNN(
+                    #     task="classification",
+                    #     nn_name="node",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaNN(
+                    #     task="classification",
+                    #     nn_name="autoint",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaNN(
+                    #     task="classification",
+                    #     nn_name="fttransformer",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
                 ]
             else:
                 raise AttributeError(
