@@ -393,47 +393,85 @@ class CatBoostClassification(BaseModel):
 
         log.info(f"Fitting {self.name}", msg_type="end")
         return oof_preds
-
+    
     @staticmethod
-    def get_trial_params(trial):
+    def get_trial_params(trial, mode: str='precision', dataset_shape: tuple[int, int] = (0, 0)):
         # `iterations` is not suggested because it will be corrected by the early stopping
-        param_distr = {
-            "boosting_type": trial.suggest_categorical(
-                "boosting_type",
-                [
-                    # "Ordered",
-                    "Plain",
-                ],
-            ),
-            "depth": trial.suggest_int("depth", 1, 16),
-            "l2_leaf_reg": trial.suggest_float("l2_leaf_reg", 0, 200),
-            "bootstrap_type": trial.suggest_categorical(
-                "bootstrap_type",
-                [
-                    "Bernoulli",
-                    "MVS", # более быстрый
-                ],
-            ),
-            "grow_policy": trial.suggest_categorical(
-                "grow_policy",
-                [
-                    "SymmetricTree",
-                    "Depthwise",
-                    "Lossguide",
-                ],
-            ),
-            "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 1, 256),
-            "rsm": trial.suggest_float("rsm", 0.4, 1),
-            "subsample": trial.suggest_float("subsample", 0.4, 1),
-            "model_size_reg": trial.suggest_float("model_size_reg", 0, 200),
-            "auto_class_weights": trial.suggest_categorical(
-                "auto_class_weights", [None, "Balanced", "SqrtBalanced"]
-            ),
-        }
+        param_distr = {}
+        match mode:
+            case 'fast':
+                param_distr['boosting_type'] = trial.suggest_categorical("boosting_type", ["Plain",])
+                param_distr["bootstrap_type"] = trial.suggest_categorical("bootstrap_type", ["MVS",])
+                param_distr["grow_policy"] = trial.suggest_categorical("grow_policy", ["Depthwise"])
+                
+                if dataset_shape[1] > 1_000:
+                    param_distr["rsm"] = trial.suggest_float("rsm", 0.3, 0.3, step=0.01)
+                elif dataset_shape[1] > 500:
+                    param_distr["rsm"] = trial.suggest_float("rsm", 0.4, 0.4, step=0.01)
+                elif dataset_shape[1] > 100:
+                    param_distr["rsm"] = trial.suggest_float("rsm", 0.5, 0.5, step=0.01)
+                elif dataset_shape[1] > 50:
+                    param_distr["rsm"] = trial.suggest_float("rsm", 0.6, 0.6, step=0.01)
+                elif dataset_shape[1] > 20:
+                    param_distr["rsm"] = trial.suggest_float("rsm", 0.8, 0.8, step=0.01)
+                else:
+                    param_distr["rsm"] = trial.suggest_float("rsm", 1., 1., step=0.01)
 
+                if dataset_shape[0] > 1_000_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.5, 0.5, step=0.01)
+                elif dataset_shape[0] > 100_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.6, 0.6, step=0.01)
+                elif dataset_shape[0] > 10_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.7, 0.7, step=0.01)
+                elif dataset_shape[0] > 1_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.8, 0.8, step=0.01)
+                else:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 1, 1, step=0.01)
+            case 'balanced':
+                param_distr['boosting_type'] = trial.suggest_categorical("boosting_type", ["Plain",])
+                param_distr["bootstrap_type"] = trial.suggest_categorical("bootstrap_type", ["MVS",])
+                param_distr["grow_policy"] = trial.suggest_categorical("grow_policy", ["SymmetricTree", "Depthwise", "Lossguide",])
+                
+                if dataset_shape[1] > 500:
+                    param_distr["rsm"] = trial.suggest_float("rsm", 0.01, 0.6, step=0.01)
+                elif dataset_shape[1] > 100:
+                    param_distr["rsm"] = trial.suggest_float("rsm", 0.2, 0.8, step=0.01)
+                elif dataset_shape[1] > 50:
+                    param_distr["rsm"] = trial.suggest_float("rsm", 0.3, 1., step=0.01)
+                elif dataset_shape[1] > 20:
+                    param_distr["rsm"] = trial.suggest_float("rsm", 0.4, 1., step=0.01)
+                else:
+                    param_distr["rsm"] = trial.suggest_float("rsm", 0.8, 1., step=0.01)
+
+                if dataset_shape[0] > 1_000_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.01, 0.5, step=0.01)
+                elif dataset_shape[0] > 500_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.2, 0.8, step=0.01)
+                elif dataset_shape[0] > 100_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.2, 1, step=0.01)
+                elif dataset_shape[0] > 10_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.4, 1, step=0.01)
+                elif dataset_shape[0] > 1_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.6, 1, step=0.01)
+                else:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.8, 1, step=0.01)
+            case _:
+                param_distr['boosting_type'] = trial.suggest_categorical("boosting_type", ["Ordered", "Plain",])
+                param_distr["bootstrap_type"] = trial.suggest_categorical("bootstrap_type", ["Bernoulli", "MVS",])
+                if param_distr["boosting_type"] == "Ordered":
+                    param_distr["grow_policy"] = trial.suggest_categorical("grow_policy", ["SymmetricTree",])
+                else:
+                    param_distr["grow_policy"] = trial.suggest_categorical("grow_policy", ["SymmetricTree", "Depthwise", "Lossguide",])
+                param_distr["rsm"] = trial.suggest_float("rsm", 0.4, 1.)
+                param_distr["subsample"] = trial.suggest_float("subsample", 0.4, 1)
+                
+        param_distr['depth'] = trial.suggest_int("depth", 1, 16)
+        param_distr['l2_leaf_reg'] = trial.suggest_float("l2_leaf_reg", 0, 200)
+        param_distr['auto_class_weights'] = trial.suggest_categorical("auto_class_weights", [None, "Balanced", "SqrtBalanced",])
+        param_distr['min_data_in_leaf'] = trial.suggest_int("min_data_in_leaf", 1, 256)
+        param_distr['model_size_reg'] = trial.suggest_float("model_size_reg", 0, 200)
         if param_distr["grow_policy"] == "Lossguide":
             param_distr["max_leaves"] = trial.suggest_int("max_leaves", 10, 512)
-
         return param_distr
 
     def get_not_tuned_params(self):
@@ -455,10 +493,10 @@ class CatBoostClassification(BaseModel):
             not_tuned_params["od_pval"] = 1e-5
         return not_tuned_params
 
-    def objective(self, trial, X, y, metric, **kwargs):
+    def objective(self, trial, X, y, metric, mode='fast', **kwargs):
         cv = self.kf.split(X, y)
 
-        trial_params = self.get_trial_params(trial)
+        trial_params = self.get_trial_params(trial, mode=mode)
         not_tuned_params = self.get_not_tuned_params()
 
         cv_metrics = []
@@ -508,6 +546,7 @@ class CatBoostClassification(BaseModel):
         metric=MSE(),
         timeout=60,
         categorical_features=[],
+        mode='fast',
     ):
         log.info(f"Tuning {self.name}", msg_type="start")
 
@@ -536,7 +575,9 @@ class CatBoostClassification(BaseModel):
             X=X, y=y, 
             metric=metric, 
             timeout=timeout, 
-            random_state=self.random_state, folds=folds)
+            random_state=self.random_state, 
+            mode=mode,
+            folds=folds)
 
         # set best parameters
         for key, val in study.best_params.items():
