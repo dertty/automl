@@ -24,7 +24,7 @@ class BaseModel:
         raise NotImplementedError
 
     @property
-    def params(self):
+    def get_params(self):
         raise NotImplementedError
 
     def predict(self, Xs):

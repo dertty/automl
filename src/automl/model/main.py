@@ -1,10 +1,12 @@
-from typing import List, Self, Union
+from typing import List, Union
 
 import joblib
 import numpy as np
+from typing_extensions import Self
 
 from ..constants import PATH, create_ml_data_dir
 from ..loggers import configure_root_logger, get_logger
+from ..metrics import get_scorer
 from .catboost import CatBoostClassification, CatBoostRegression
 from .lama import TabularLama, TabularLamaNN, TabularLamaUtilized
 from .lightgbm import LightGBMClassification, LightGBMRegression
@@ -18,8 +20,6 @@ from .sklearn_forests import (
 from .type_hints import FeaturesType, TargetType
 from .utils import convert_to_numpy, save_yaml
 from .xgboost import XGBClassification, XGBRegression
-
-from automl.metrics import get_scorer
 
 log = get_logger(__name__)
 
@@ -342,7 +342,7 @@ class AutoML:
         return y_pred
 
     def evaluate(self, y_true: TargetType, y_pred: TargetType):
-        if self.task == 'classification':
+        if self.task == "classification":
             # binary classifiation
             if len(np.unique(y_true)) <= 2:
                 return self.scorer.score(y_true, y_pred[:, 1])

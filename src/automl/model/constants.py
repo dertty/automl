@@ -1,7 +1,6 @@
 from datetime import datetime
 from pathlib import Path
 
-
 PATH = Path().resolve() / "ml_data" / datetime.now().strftime("%Y_%m_%d___%H_%M_%S")
 
 
