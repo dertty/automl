@@ -433,7 +433,7 @@ class CatBoostClassification(BaseModel):
                 param_distr["grow_policy"] = trial.suggest_categorical("grow_policy", ["SymmetricTree", "Depthwise", "Lossguide",])
                 
                 if dataset_shape[1] > 500:
-                    param_distr["rsm"] = trial.suggest_float("rsm", 0.01, 0.6, step=0.01)
+                    param_distr["rsm"] = trial.suggest_float("rsm", 0.05, 0.6, step=0.01)
                 elif dataset_shape[1] > 100:
                     param_distr["rsm"] = trial.suggest_float("rsm", 0.2, 0.8, step=0.01)
                 elif dataset_shape[1] > 50:
@@ -444,7 +444,7 @@ class CatBoostClassification(BaseModel):
                     param_distr["rsm"] = trial.suggest_float("rsm", 0.8, 1., step=0.01)
 
                 if dataset_shape[0] > 1_000_000:
-                    param_distr["subsample"] = trial.suggest_float("subsample", 0.01, 0.5, step=0.01)
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.05, 0.5, step=0.01)
                 elif dataset_shape[0] > 500_000:
                     param_distr["subsample"] = trial.suggest_float("subsample", 0.2, 0.8, step=0.01)
                 elif dataset_shape[0] > 100_000:
@@ -464,6 +464,10 @@ class CatBoostClassification(BaseModel):
                     param_distr["grow_policy"] = trial.suggest_categorical("grow_policy", ["SymmetricTree", "Depthwise", "Lossguide",])
                 param_distr["rsm"] = trial.suggest_float("rsm", 0.4, 1.)
                 param_distr["subsample"] = trial.suggest_float("subsample", 0.4, 1)
+                param_distr["od_type"] = trial.suggest_categorical("od_type", ["Iter", "IncToDec",])
+                if param_distr["od_type"] == "IncToDec":
+                    param_distr["od_pval"] = trial.suggest_float("od_pval", 1e-10, 1e-2)
+                    
                 
         param_distr['depth'] = trial.suggest_int("depth", 1, 16)
         param_distr['l2_leaf_reg'] = trial.suggest_float("l2_leaf_reg", 0, 200)
@@ -496,7 +500,7 @@ class CatBoostClassification(BaseModel):
     def objective(self, trial, X, y, metric, mode='fast', **kwargs):
         cv = self.kf.split(X, y)
 
-        trial_params = self.get_trial_params(trial, mode=mode)
+        trial_params = self.get_trial_params(trial, mode=mode, dataset_shape=X.shape)
         not_tuned_params = self.get_not_tuned_params()
 
         cv_metrics = []
@@ -514,7 +518,7 @@ class CatBoostClassification(BaseModel):
                 else:
                     eval_data = test_data
                 
-                model = CBClass(**trial_params, **not_tuned_params)
+                model = CBClass(**{**not_tuned_params, **trial_params, })
 
                 model.fit(train_data, eval_set=eval_data)
                 y_pred = model.predict_proba(test_data)
@@ -568,14 +572,16 @@ class CatBoostClassification(BaseModel):
             test_data.save(self.tmp_dir / f'test_data{i}')
             
             folds.append([self.tmp_dir / f'train_data_{i}', self.tmp_dir / f'test_data{i}', train_idx, test_idx])
-            
+        
+        self.od_wait = 20 if mode == 'fast' else 50 if mode == 'balanced' else 100
+        optuna_early_stopping_rounds = 20 if mode == 'fast' else 50 if mode == 'balanced' else 100
         study = optuna_tune(
             name=self.name, 
             objective=self.objective, 
             X=X, y=y, 
             metric=metric, 
             timeout=timeout, 
-            random_state=self.random_state, 
+            random_state=self.random_state, early_stopping_rounds=optuna_early_stopping_rounds,
             mode=mode,
             folds=folds)
 

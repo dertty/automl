@@ -258,25 +258,75 @@ class ExtraTreesClassification(BaseModel):
         return oof_preds
 
     @staticmethod
-    def get_trial_params(trial):
-        param_distr = {
-            "n_estimators": trial.suggest_int("n_estimators", 20, 1000),
-            "max_depth": trial.suggest_int("max_depth", 2, 15),
-            "min_samples_split": trial.suggest_float("min_samples_split", 0, 0.2),
-            "min_samples_leaf": trial.suggest_float("min_samples_leaf", 0, 0.2),
-            "bootstrap": True,
-            "max_features": trial.suggest_float("max_features", 0.1, 1),
-            "criterion": trial.suggest_categorical(
-                "criterion",
-                ["gini", "entropy", "log_loss"],
-            ),
-            "class_weight": trial.suggest_categorical(
-                "class_weight", ["balanced", "balanced_subsample"]
-            ),
-            "oob_score": trial.suggest_categorical("oob_score", [True, False]),
-            "max_samples": trial.suggest_float("max_samples", 0.01, 1),
-        }
+    def get_trial_params(trial, mode: str='fast', dataset_shape: tuple[int, int] = (0, 0)):
+        param_distr = {}
+        match mode:
+            case 'fast':
+                param_distr["n_estimators"] = trial.suggest_int("n_estimators", 20, 300, step=10)
+                
+                if dataset_shape[1] > 1_000:
+                    param_distr["max_features"] = trial.suggest_float("max_features", 0.3, 0.3, step=0.01)
+                elif dataset_shape[1] > 500:
+                    param_distr["max_features"] = trial.suggest_float("max_features", 0.4, 0.4, step=0.01)
+                elif dataset_shape[1] > 100:
+                    param_distr["max_features"] = trial.suggest_float("max_features", 0.5, 0.5, step=0.01)
+                elif dataset_shape[1] > 50:
+                    param_distr["max_features"] = trial.suggest_float("max_features", 0.6, 0.6, step=0.01)
+                elif dataset_shape[1] > 20:
+                    param_distr["max_features"] = trial.suggest_float("max_features", 0.8, 0.8, step=0.01)
+                else:
+                    param_distr["max_features"] = trial.suggest_float("max_features", 1., 1., step=0.01)
+                
+                if dataset_shape[0] > 1_000_000:
+                    param_distr["max_samples"] = trial.suggest_float("max_samples", 0.5, 0.5, step=0.01)
+                elif dataset_shape[0] > 100_000:
+                    param_distr["max_samples"] = trial.suggest_float("max_samples", 0.6, 0.6, step=0.01)
+                elif dataset_shape[0] > 10_000:
+                    param_distr["max_samples"] = trial.suggest_float("max_samples", 0.7, 0.7, step=0.01)
+                elif dataset_shape[0] > 1_000:
+                    param_distr["max_samples"] = trial.suggest_float("max_samples", 0.8, 0.8, step=0.01)
+                else:
+                    param_distr["max_samples"] = trial.suggest_float("max_samples", 1., 1., step=0.01)
 
+            case 'balanced':
+                param_distr["n_estimators"] = trial.suggest_int("n_estimators", 20, 1_000, step=10)
+        
+                if dataset_shape[1] > 500:
+                    param_distr["max_features"] = trial.suggest_float("max_features", 0.05, 0.5, step=0.01)
+                elif dataset_shape[1] > 100:
+                    param_distr["max_features"] = trial.suggest_float("max_features", 0.2, 0.8, step=0.01)
+                elif dataset_shape[1] > 50:
+                    param_distr["max_features"] = trial.suggest_float("max_features", 0.3, 1., step=0.01)
+                elif dataset_shape[1] > 20:
+                    param_distr["max_features"] = trial.suggest_float("max_features", 0.1, 1., step=0.01)
+                else:
+                    param_distr["max_features"] = trial.suggest_float("max_features", 0.8, 1., step=0.01)
+                
+                if dataset_shape[0] > 1_000_000:
+                    param_distr["max_samples"] = trial.suggest_float("max_samples", 0.05, 0.5, step=0.01)
+                elif dataset_shape[0] > 500_000:
+                    param_distr["max_samples"] = trial.suggest_float("max_samples", 0.2, 0.8, step=0.01)
+                elif dataset_shape[0] > 100_000:
+                    param_distr["max_samples"] = trial.suggest_float("max_samples", 0.2, 1., step=0.01)
+                elif dataset_shape[0] > 10_000:
+                    param_distr["max_samples"] = trial.suggest_float("max_samples", 0.4, 1., step=0.01)
+                elif dataset_shape[0] > 1_000:
+                    param_distr["max_samples"] = trial.suggest_float("max_samples", 0.6, 1., step=0.01)
+                else:
+                    param_distr["max_samples"] = trial.suggest_float("max_samples", 0.8, 1., step=0.01)
+            case _:
+                param_distr["n_estimators"] = trial.suggest_int("n_estimators", 20, 2_000)
+                param_distr["max_features"] = trial.suggest_float("max_features", 0.1, 1)
+                param_distr["max_samples"] = trial.suggest_float("max_samples", 0.01, 1)
+        
+        param_distr["max_depth"] = trial.suggest_int("max_depth", 2, 15)
+        param_distr["min_samples_split"] = trial.suggest_float("min_samples_split", 0, 0.2)
+        param_distr["min_samples_leaf"] = trial.suggest_float("min_samples_leaf", 0, 0.2)
+        param_distr["bootstrap"] = True
+        param_distr["criterion"] = trial.suggest_categorical("criterion", ["gini", "entropy", "log_loss"],)
+        param_distr["class_weight"] = trial.suggest_categorical("class_weight", ["balanced", "balanced_subsample"])
+        param_distr["oob_score"] = trial.suggest_categorical("oob_score", [True, False])
+    
         return param_distr
 
     def get_not_tuned_params(self):
@@ -286,10 +336,10 @@ class ExtraTreesClassification(BaseModel):
             "verbose": self.verbose,
         }
 
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, metric, mode: str='fast'):
         cv = self.kf.split(X, y)
 
-        trial_params = self.get_trial_params(trial)
+        trial_params = self.get_trial_params(trial, mode=mode, dataset_shape=X.shape)
         not_tuned_params = self.get_not_tuned_params()
 
         model = EXClasSklearn(**trial_params, **not_tuned_params)
@@ -317,6 +367,7 @@ class ExtraTreesClassification(BaseModel):
         metric=MSE(),
         timeout=60,
         categorical_features=[],
+        mode: str='fast',
     ):
         log.info(f"Tuning {self.name}", msg_type="start")
 
@@ -324,7 +375,14 @@ class ExtraTreesClassification(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
+        optuna_early_stopping_rounds = 20 if mode == 'fast' else 50 if mode == 'balanced' else 100
+        study = optuna_tune(
+            self.name, 
+            self.objective, 
+            X=X, y=y, metric=metric, timeout=timeout, early_stopping_rounds=optuna_early_stopping_rounds,
+            random_state=self.random_state,
+            mode=mode,
+        )
 
         # set best parameters
         for key, val in study.best_params.items():

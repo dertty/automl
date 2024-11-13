@@ -145,36 +145,36 @@ class AutoML:
                 ]
             elif self.task == "classification":
                 self.models_list = [
-                    # LogisticRegression(
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
-                    # RandomForestClassification(
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
-                    # ExtraTreesClassification(
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
+                    LogisticRegression(
+                        n_jobs=self.n_jobs,
+                        random_state=self.random_state,
+                        time_series=self.time_series,
+                    ),
+                    RandomForestClassification(
+                        n_jobs=self.n_jobs,
+                        random_state=self.random_state,
+                        time_series=self.time_series,
+                    ),
+                    ExtraTreesClassification(
+                        n_jobs=self.n_jobs,
+                        random_state=self.random_state,
+                        time_series=self.time_series,
+                    ),
                     CatBoostClassification(
                         n_jobs=self.n_jobs,
                         random_state=self.random_state,
                         time_series=self.time_series,
                     ),
-                    # LightGBMClassification(
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
-                    # XGBClassification(
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
+                    LightGBMClassification(
+                        n_jobs=self.n_jobs,
+                        random_state=self.random_state,
+                        time_series=self.time_series,
+                    ),
+                    XGBClassification(
+                        n_jobs=self.n_jobs,
+                        random_state=self.random_state,
+                        time_series=self.time_series,
+                    ),
                     # TabularLama(
                     #     task="classification",
                     #     n_jobs=self.n_jobs,
@@ -251,7 +251,8 @@ class AutoML:
         y: TargetType,
         Xs_test: Union[FeaturesType, List[FeaturesType]],
         ys_test: Union[TargetType, List[TargetType]],
-        categorical_features=[],
+        categorical_features: List[str] = [],
+        mode: str = 'fast'
     ) -> Self:
         """If self.time_series == True -> X should be sorted by time."""
 
@@ -273,6 +274,7 @@ class AutoML:
                 metric=self.metric,
                 timeout=self.tuning_timeout,
                 categorical_features=categorical_features,
+                mode=mode
             )
 
             # fit the tuned model and predict on train
@@ -305,14 +307,14 @@ class AutoML:
             )
 
             # create model's directory
-            model_dir = self.path / model.name
-            model_dir.mkdir(exist_ok=True)
+            # model_dir = self.path / model.name
+            # model_dir.mkdir(exist_ok=True)
 
             # save the model
-            joblib.dump(model, model_dir / f"{model.name}.joblib")
+            # joblib.dump(model, model_dir / f"{model.name}.joblib")
 
             # save best model's parameters
-            save_yaml(model.params, model_dir / f"{model.name}.yaml")
+            # save_yaml(model.params, model_dir / f"{model.name}.yaml")
 
             log.info(f"Working with {model.name}", msg_type="end")
 

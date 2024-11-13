@@ -64,8 +64,8 @@ class EarlyStoppingCallback(object):
             
             
 def optuna_tune(name, objective, X, y, metric, 
-                timeout=60, random_state=0, 
-                early_stopping_rounds=100, threshold=1e-4,
+                timeout: int=60, random_state: int=0, 
+                early_stopping_rounds: int=100, threshold: float=1e-4,
                 **kwargs
                 ):
     # seed sampler for reproducibility

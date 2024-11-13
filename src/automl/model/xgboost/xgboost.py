@@ -237,7 +237,7 @@ class XGBClassification(BaseModel):
     def __init__(
         self,
         objective="binary:logistic",
-        n_estimators=100,
+        n_estimators=2000,
         learning_rate=0.03,
         max_leaves=None,
         max_depth=None,
@@ -353,31 +353,90 @@ class XGBClassification(BaseModel):
         return oof_preds
 
     @staticmethod
-    def get_trial_params(trial):
-        param_distr = {
-            "max_depth": trial.suggest_int("max_depth", 1, 16),
-            "grow_policy": trial.suggest_categorical(
-                "grow_policy", ["depthwise", "lossguide"]
-            ),
-            "max_leaves": trial.suggest_int("max_leaves", 10, 512),
-            "gamma": trial.suggest_float("gamma", 0, 20),
-            "subsample": trial.suggest_float("subsample", 0.1, 1),
-            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.1, 1),
-            "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.1, 1),
-            "reg_lambda": trial.suggest_float("reg_lambda", 0, 10),
-            "reg_alpha": trial.suggest_float("reg_alpha", 0, 10),
-            "min_child_weight": trial.suggest_int("min_child_weight", 0, 20),
-            "class_weight": trial.suggest_categorical(
-                "class_weight", [None, "balanced"]
-            ),
-        }
+    def get_trial_params(trial, mode: str='fast', dataset_shape: tuple[int, int] = (0, 0)):
+        param_distr = {}
+        match mode:
+            case 'fast':
+                if dataset_shape[1] > 1_000:
+                    param_distr["colsample_bytree"] = trial.suggest_float("colsample_bytree", 0.3, 0.3, step=0.01)
+                elif dataset_shape[1] > 500:
+                    param_distr["colsample_bytree"] = trial.suggest_float("colsample_bytree", 0.4, 0.4, step=0.01)
+                elif dataset_shape[1] > 100:
+                    param_distr["colsample_bytree"] = trial.suggest_float("colsample_bytree", 0.5, 0.5, step=0.01)
+                elif dataset_shape[1] > 50:
+                    param_distr["colsample_bytree"] = trial.suggest_float("colsample_bytree", 0.6, 0.6, step=0.01)
+                elif dataset_shape[1] > 20:
+                    param_distr["colsample_bytree"] = trial.suggest_float("colsample_bytree", 0.8, 0.8, step=0.01)
+                else:
+                    param_distr["colsample_bytree"] = trial.suggest_float("colsample_bytree", 1., 1., step=0.01)
+                
+                param_distr["colsample_bynode"] = trial.suggest_float("colsample_bynode", 1., 1., step=0.01)
+                
+                if dataset_shape[0] > 1_000_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.5, 0.5, step=0.01)
+                elif dataset_shape[0] > 100_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.6, 0.6, step=0.01)
+                elif dataset_shape[0] > 10_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.7, 0.7, step=0.01)
+                elif dataset_shape[0] > 1_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.8, 0.8, step=0.01)
+                else:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 1., 1., step=0.01)
+                    
+                param_distr["grow_policy"] = trial.suggest_categorical("grow_policy", ["depthwise"])
+            case 'balanced':
+                if dataset_shape[1] > 500:
+                    param_distr["colsample_bytree"] = trial.suggest_float("colsample_bytree", 0.05, 0.5, step=0.01)
+                elif dataset_shape[1] > 100:
+                    param_distr["colsample_bytree"] = trial.suggest_float("colsample_bytree", 0.2, 0.8, step=0.01)
+                elif dataset_shape[1] > 50:
+                    param_distr["colsample_bytree"] = trial.suggest_float("colsample_bytree", 0.3, 1., step=0.01)
+                elif dataset_shape[1] > 20:
+                    param_distr["colsample_bytree"] = trial.suggest_float("colsample_bytree", 0.1, 1., step=0.01)
+                else:
+                    param_distr["colsample_bytree"] = trial.suggest_float("colsample_bytree", 0.8, 1., step=0.01)
+                    
+                if dataset_shape[1] > 500:
+                    param_distr["colsample_bynode"] = trial.suggest_float("colsample_bynode", 0.5, 1., step=0.1)
+                elif dataset_shape[1] > 50:
+                    param_distr["colsample_bynode"] = trial.suggest_float("colsample_bynode", 0.5, 1., step=0.05)
+                else:
+                    param_distr["colsample_bynode"] = trial.suggest_float("colsample_bynode", 0.8, 1., step=0.01)
+                
+                if dataset_shape[0] > 1_000_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.05, 0.5, step=0.01)
+                elif dataset_shape[0] > 500_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.1, 0.8, step=0.01)
+                elif dataset_shape[0] > 100_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.1, 1., step=0.01)
+                elif dataset_shape[0] > 10_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.3, 1., step=0.01)
+                elif dataset_shape[0] > 1_000:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.5, 1., step=0.01)
+                else:
+                    param_distr["subsample"] = trial.suggest_float("subsample", 0.7, 1., step=0.01)
+                param_distr["grow_policy"] = trial.suggest_categorical("grow_policy", ["depthwise", "lossguide"])
+            case _:
+                param_distr["colsample_bytree"] = trial.suggest_float("colsample_bytree", 0.1, 1, step=0.01)
+                param_distr["colsample_bylevel"] = trial.suggest_float("colsample_bylevel", 0.1, 1, step=0.01)
+                param_distr["colsample_bynode"] = trial.suggest_float("colsample_bynode", 0.1, 1, step=0.01)
+                param_distr["grow_policy"] = trial.suggest_categorical("grow_policy", ["depthwise", "lossguide"])
+        
+        
+        param_distr["max_depth"] = trial.suggest_int("max_depth", 1, 16)
+        param_distr["max_leaves"] = trial.suggest_int("max_leaves", 10, 512)
+        param_distr["gamma"] = trial.suggest_float("gamma", 0, 20)
+        param_distr["reg_lambda"] = trial.suggest_float("reg_lambda", 0, 10)
+        param_distr["reg_alpha"] = trial.suggest_float("reg_alpha", 0, 10)
+        param_distr["min_child_weight"] = trial.suggest_int("min_child_weight", 0, 20)
+        param_distr["class_weight"] = trial.suggest_categorical("class_weight", [None, "balanced"])
 
         return param_distr
 
     def get_not_tuned_params(self):
         not_tuned_params = {
             "objective": self.objective_type,
-            "n_estimators": 2000,
+            "n_estimators": self.n_estimators,
             "learning_rate": self.learning_rate,
             "verbosity": self.verbosity,
             "early_stopping_rounds": self.early_stopping_rounds,
@@ -388,14 +447,14 @@ class XGBClassification(BaseModel):
         }
         return not_tuned_params
 
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, metric, mode: str='fast'):
         """
         Perform cross-validation to evaluate the model.
         Mean test score is returned.
         """
         cv = self.kf.split(X, y)
 
-        trial_params = self.get_trial_params(trial)
+        trial_params = self.get_trial_params(trial, mode=mode, dataset_shape=X.shape)
         not_tuned_params = self.get_not_tuned_params()
 
         class_weight = trial_params.pop("class_weight")
@@ -443,6 +502,7 @@ class XGBClassification(BaseModel):
         metric=MSE(),
         timeout=60,
         categorical_features=[],
+        mode: str='fast',
     ):
         log.info(f"Tuning {self.name}", msg_type="start")
 
@@ -460,7 +520,15 @@ class XGBClassification(BaseModel):
         if self.n_classes > 2:
             self.objective_type = "multi:softmax"
 
-        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
+        self.early_stopping_rounds = 20 if mode == 'fast' else 50 if mode == 'balanced' else 100
+        optuna_early_stopping_rounds = 20 if mode == 'fast' else 50 if mode == 'balanced' else 100
+        study = optuna_tune(
+            self.name, 
+            self.objective, 
+            X=X, y=y, metric=metric, timeout=timeout, 
+            random_state=self.random_state, early_stopping_rounds=optuna_early_stopping_rounds,
+            mode=mode,
+        )
 
         # set best parameters
         for key, val in study.best_params.items():

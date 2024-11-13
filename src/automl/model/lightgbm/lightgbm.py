@@ -345,19 +345,80 @@ class LightGBMClassification(BaseModel):
         log.info(f"Fitting {self.name}", msg_type="end")
         return oof_preds
 
-    def get_trial_params(self, trial):
-        param_distr = {
-            "max_depth": trial.suggest_int("max_depth", 1, 16),
-            "num_leaves": trial.suggest_int("num_leaves", 10, 512),
-            "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 1, 256),
-            "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 1),
-            "bagging_freq": trial.suggest_int("bagging_freq", 0, 20, step=10),
-            "feature_fraction": trial.suggest_float("feature_fraction", 0.4, 1),
-            "lambda_l1": trial.suggest_float("lambda_l1", 0, 10),
-            "lambda_l2": trial.suggest_float("lambda_l2", 0, 10),
-            "min_gain_to_split": trial.suggest_float("min_gain_to_split", 0, 20),
-            "is_unbalance": trial.suggest_categorical("is_unbalance", [True, False]),
-        }
+    @staticmethod
+    def get_trial_params(trial, mode: str='fast', dataset_shape: tuple[int, int] = (0, 0)):
+        param_distr = {}
+        match mode:
+            case 'fast':
+                param_distr["min_gain_to_split"] = trial.suggest_float("min_gain_to_split", 1e-6, 1e-6)
+                
+                if dataset_shape[1] > 1_000:
+                    param_distr["feature_fraction"] = trial.suggest_float("feature_fraction", 0.3, 0.3, step=0.01)
+                elif dataset_shape[1] > 500:
+                    param_distr["feature_fraction"] = trial.suggest_float("feature_fraction", 0.4, 0.4, step=0.01)
+                elif dataset_shape[1] > 100:
+                    param_distr["feature_fraction"] = trial.suggest_float("feature_fraction", 0.5, 0.5, step=0.01)
+                elif dataset_shape[1] > 50:
+                    param_distr["feature_fraction"] = trial.suggest_float("feature_fraction", 0.6, 0.6, step=0.01)
+                elif dataset_shape[1] > 20:
+                    param_distr["feature_fraction"] = trial.suggest_float("feature_fraction", 0.8, 0.8, step=0.01)
+                else:
+                    param_distr["feature_fraction"] = trial.suggest_float("feature_fraction", 1., 1., step=0.01)
+                
+                if dataset_shape[0] > 1_000_000:
+                    param_distr["bagging_fraction"] = trial.suggest_float("bagging_fraction", 0.5, 0.5, step=0.01)
+                elif dataset_shape[0] > 100_000:
+                    param_distr["bagging_fraction"] = trial.suggest_float("bagging_fraction", 0.6, 0.6, step=0.01)
+                elif dataset_shape[0] > 10_000:
+                    param_distr["bagging_fraction"] = trial.suggest_float("bagging_fraction", 0.7, 0.7, step=0.01)
+                elif dataset_shape[0] > 1_000:
+                    param_distr["bagging_fraction"] = trial.suggest_float("bagging_fraction", 0.8, 0.8, step=0.01)
+                else:
+                    param_distr["bagging_fraction"] = trial.suggest_float("bagging_fraction", 1., 1., step=0.01)
+                
+                param_distr["bagging_freq"] = trial.suggest_int("bagging_freq", 5, 5,)
+            case 'balanced':
+                param_distr["min_gain_to_split"] = trial.suggest_float("min_gain_to_split", 1e-9, 1e-9)
+                
+                if dataset_shape[1] > 500:
+                    param_distr["feature_fraction"] = trial.suggest_float("feature_fraction", 0.05, 0.5, step=0.01)
+                elif dataset_shape[1] > 100:
+                    param_distr["feature_fraction"] = trial.suggest_float("feature_fraction", 0.2, 0.8, step=0.01)
+                elif dataset_shape[1] > 50:
+                    param_distr["feature_fraction"] = trial.suggest_float("feature_fraction", 0.3, 1., step=0.01)
+                elif dataset_shape[1] > 20:
+                    param_distr["feature_fraction"] = trial.suggest_float("feature_fraction", 0.1, 1., step=0.01)
+                else:
+                    param_distr["feature_fraction"] = trial.suggest_float("feature_fraction", 0.8, 1., step=0.01)
+                
+                if dataset_shape[0] > 1_000_000:
+                    param_distr["bagging_fraction"] = trial.suggest_float("bagging_fraction", 0.05, 0.5, step=0.01)
+                elif dataset_shape[0] > 500_000:
+                    param_distr["bagging_fraction"] = trial.suggest_float("bagging_fraction", 0.2, 0.8, step=0.01)
+                elif dataset_shape[0] > 100_000:
+                    param_distr["bagging_fraction"] = trial.suggest_float("bagging_fraction", 0.2, 1., step=0.01)
+                elif dataset_shape[0] > 10_000:
+                    param_distr["bagging_fraction"] = trial.suggest_float("bagging_fraction", 0.4, 1., step=0.01)
+                elif dataset_shape[0] > 1_000:
+                    param_distr["bagging_fraction"] = trial.suggest_float("bagging_fraction", 0.6, 1., step=0.01)
+                else:
+                    param_distr["bagging_fraction"] = trial.suggest_float("bagging_fraction", 0.8, 1., step=0.01)
+                
+                param_distr["bagging_freq"] = trial.suggest_int("bagging_freq", 0, 6, step=2)
+            case _:
+                param_distr["min_gain_to_split"] = trial.suggest_float("min_gain_to_split", 0, 20)
+                param_distr["feature_fraction"] = trial.suggest_float("feature_fraction", 0.4, 1.)
+                param_distr["bagging_fraction"] = trial.suggest_float("bagging_fraction", 0.4, 1.)
+                param_distr["bagging_freq"] = trial.suggest_int("bagging_freq", 0, 21, step=3)
+        
+        param_distr["max_depth"] = trial.suggest_int("max_depth", 1, 16)
+        param_distr["num_leaves"] = trial.suggest_int("num_leaves", 2, 2 ** param_distr["max_depth"])
+        param_distr["min_data_in_leaf"] = trial.suggest_int("min_data_in_leaf", 1, 256)
+        
+        param_distr["lambda_l1"] = trial.suggest_float("lambda_l1", 0, 10)
+        param_distr["lambda_l2"] = trial.suggest_float("lambda_l2", 0, 10)
+        
+        param_distr["is_unbalance"] = trial.suggest_categorical("is_unbalance", [True, False])
 
         return param_distr
 
@@ -375,10 +436,10 @@ class LightGBMClassification(BaseModel):
         }
         return not_tuned_params
 
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, metric, mode: str='fast'):
         cv = self.kf.split(X, y)
 
-        trial_params = self.get_trial_params(trial)
+        trial_params = self.get_trial_params(trial, mode=mode, dataset_shape=X.shape)
         not_tuned_params = self.get_not_tuned_params()
 
         # BUG LightGBM produces very annoying alias warning.
@@ -448,6 +509,7 @@ class LightGBMClassification(BaseModel):
         metric=MSE(),
         timeout=60,
         categorical_features=[],
+        mode: str='fast',
     ):
         log.info(f"Tuning {self.name}", msg_type="start")
 
@@ -461,7 +523,15 @@ class LightGBMClassification(BaseModel):
         if self.n_classes > 2:
             self.objective_type = "multiclass"
 
-        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
+        self.early_stopping_round = 20 if mode == 'fast' else 50 if mode == 'balanced' else 100
+        optuna_early_stopping_rounds = 20 if mode == 'fast' else 50 if mode == 'balanced' else 100
+        study = optuna_tune(
+            self.name, 
+            self.objective, 
+            X=X, y=y, metric=metric, timeout=timeout, early_stopping_rounds=optuna_early_stopping_rounds,
+            random_state=self.random_state,
+            mode=mode,
+            )
 
         # set best parameters
         for key, val in study.best_params.items():
