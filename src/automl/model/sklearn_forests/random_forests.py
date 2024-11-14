@@ -1,5 +1,4 @@
 import numpy as np
-import optuna
 from sklearn.ensemble import RandomForestClassifier as RFClassSklearn
 from sklearn.ensemble import RandomForestRegressor as RFRegSklearn
 from sklearn.model_selection import (
@@ -12,7 +11,7 @@ from sklearn.model_selection import (
 from ...loggers import get_logger
 from ..base_model import BaseModel
 from ..type_hints import FeaturesType, TargetType
-from ..utils import optuna_tune, convert_to_numpy
+from ..utils import convert_to_numpy, tune_optuna
 
 log = get_logger(__name__)
 
@@ -142,7 +141,15 @@ class RandomForestRegression(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
+        study = optuna_tune(
+            self.name,
+            self.objective,
+            X=X,
+            y=y,
+            metric=metric,
+            timeout=timeout,
+            random_state=self.random_state,
+        )
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -309,7 +316,15 @@ class RandomForestClassification(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
+        study = tune_optuna(
+            self.name,
+            self.objective,
+            X=X,
+            y=y,
+            scorer=scorer,
+            timeout=timeout,
+            random_state=self.random_state,
+        )
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -341,7 +356,6 @@ class RandomForestClassification(BaseModel):
     @property
     def inner_params(self):
         return {
-            **self.get_not_tuned_params(),
             "n_estimators": self.n_estimators,
             "criterion": self.criterion,
             "max_depth": self.max_depth,

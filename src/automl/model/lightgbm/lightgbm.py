@@ -1,12 +1,11 @@
 import lightgbm as lgb
 import numpy as np
-import optuna
 from sklearn.model_selection import KFold, StratifiedKFold, TimeSeriesSplit
 
 from ...loggers import get_logger
 from ..base_model import BaseModel
 from ..type_hints import FeaturesType, TargetType
-from ..utils import convert_to_numpy, convert_to_pandas, optuna_tune
+from ..utils import convert_to_numpy, convert_to_pandas, tune_optuna
 from .metrics import get_eval_metric
 
 log = get_logger(__name__)
@@ -193,7 +192,15 @@ class LightGBMRegression(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
+        study = optuna_tune(
+            self.name,
+            self.objective,
+            X=X,
+            y=y,
+            metric=metric,
+            timeout=timeout,
+            random_state=self.random_state,
+        )
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -353,7 +360,7 @@ class LightGBMClassification(BaseModel):
             "num_leaves": trial.suggest_int("num_leaves", 10, 512),
             "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 1, 256),
             "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 1),
-            "bagging_freq": trial.suggest_int("bagging_freq", 0, 20, step=10),
+            "bagging_freq": trial.suggest_int("bagging_freq", 0, 20, step=5),
             "feature_fraction": trial.suggest_float("feature_fraction", 0.4, 1),
             "lambda_l1": trial.suggest_float("lambda_l1", 0, 10),
             "lambda_l2": trial.suggest_float("lambda_l2", 0, 10),
@@ -452,7 +459,15 @@ class LightGBMClassification(BaseModel):
         if self.n_classes > 2:
             self.objective_type = "multiclass"
 
-        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
+        study = tune_optuna(
+            self.name,
+            self.objective,
+            X=X,
+            y=y,
+            scorer=scorer,
+            timeout=timeout,
+            random_state=self.random_state,
+        )
 
         # set best parameters
         for key, val in study.best_params.items():

@@ -1,5 +1,4 @@
 import numpy as np
-import optuna
 from catboost import CatBoostClassifier as CBClass
 from catboost import CatBoostRegressor as CBReg
 from catboost import Pool
@@ -8,7 +7,7 @@ from sklearn.model_selection import KFold, StratifiedKFold, TimeSeriesSplit
 from ...loggers import get_logger
 from ..base_model import BaseModel
 from ..type_hints import FeaturesType, TargetType
-from ..utils import LogWhenImproved, convert_to_numpy, convert_to_pandas, optuna_tune
+from ..utils import convert_to_numpy, convert_to_pandas, tune_optuna
 from .metrics import get_eval_metric
 
 log = get_logger(__name__)
@@ -35,7 +34,7 @@ class CatBoostRegression(BaseModel):
         n_jobs=6,
         random_state=42,
         time_series=False,
-        od_type='Iter',
+        od_type="Iter",
     ):
         self.name = "CatBoostRegression"
         self.cat_features = []
@@ -56,7 +55,7 @@ class CatBoostRegression(BaseModel):
         self.min_data_in_leaf = min_data_in_leaf
         self.one_hot_max_size = one_hot_max_size
         self.od_type = od_type
-        
+
         self.thread_count = n_jobs
         self.random_state = random_state
         self.verbose = False
@@ -161,9 +160,9 @@ class CatBoostRegression(BaseModel):
             "allow_writing_files": self.allow_writing_files,
             "od_type": self.od_type,
             "od_wait": self.od_wait,
-            'use_best_model': True,
+            "use_best_model": True,
         }
-        if not_tuned_params.get('od_type', 'Iter') == 'Iter':
+        if not_tuned_params.get("od_type", "Iter") == "Iter":
             not_tuned_params["od_pval"] = 0
         else:
             not_tuned_params["od_pval"] = 1e-5
@@ -214,7 +213,15 @@ class CatBoostRegression(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
+        study = optuna_tune(
+            self.name,
+            self.objective,
+            X=X,
+            y=y,
+            metric=metric,
+            timeout=timeout,
+            random_state=self.random_state,
+        )
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -279,7 +286,8 @@ class CatBoostClassification(BaseModel):
         verbose=False,
         allow_writing_files=False,
         n_jobs=None,
-        od_type='Iter'
+        od_type="Iter",
+        od_pval=None,
     ):
 
         self.name = "CatBoostClassification"
@@ -304,6 +312,7 @@ class CatBoostClassification(BaseModel):
         self.n_jobs = n_jobs
         self.thread_count = thread_count
         self.od_type = od_type
+        self.od_pval = od_pval
         self.random_state = random_state
         self.verbose = verbose
         self.allow_writing_files = allow_writing_files
@@ -451,7 +460,15 @@ class CatBoostClassification(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
+        study = tune_optuna(
+            self.name,
+            self.objective,
+            X=X,
+            y=y,
+            scorer=scorer,
+            timeout=timeout,
+            random_state=self.random_state,
+        )
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -483,8 +500,9 @@ class CatBoostClassification(BaseModel):
             "thread_count": self.thread_count,
             "verbose": self.verbose,
             "allow_writing_files": self.allow_writing_files,
+            "od_type": self.od_type,
         }
-        if not_tuned_params.get('od_type', 'Iter') == 'Iter':
+        if not_tuned_params.get("od_type", "Iter") == "Iter":
             not_tuned_params["od_pval"] = 0
         else:
             not_tuned_params["od_pval"] = 1e-5
@@ -493,7 +511,6 @@ class CatBoostClassification(BaseModel):
     @property
     def inner_params(self):
         return {
-            **self.get_not_tuned_params(),
             "boosting_type": self.boosting_type,
             "max_leaves": self.max_leaves,
             "grow_policy": self.grow_policy,

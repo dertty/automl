@@ -1,7 +1,6 @@
 from copy import deepcopy
 
 import numpy as np
-import optuna
 from sklearn.model_selection import KFold, StratifiedKFold, TimeSeriesSplit
 from sklearn.utils import compute_sample_weight
 from xgboost import XGBClassifier as XGBClass
@@ -10,7 +9,7 @@ from xgboost import XGBRegressor as XGBReg
 from ...loggers import get_logger
 from ..base_model import BaseModel
 from ..type_hints import FeaturesType, TargetType
-from ..utils import optuna_tune, convert_to_numpy, convert_to_pandas
+from ..utils import convert_to_numpy, convert_to_pandas, tune_optuna
 from .metrics import get_eval_metric
 
 log = get_logger(__name__)
@@ -191,7 +190,15 @@ class XGBRegression(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
+        study = optuna_tune(
+            self.name,
+            self.objective,
+            X=X,
+            y=y,
+            metric=metric,
+            timeout=timeout,
+            random_state=self.random_state,
+        )
 
         # set best parameters
         for key, val in study.best_params.items():
@@ -456,7 +463,15 @@ class XGBClassification(BaseModel):
         if self.n_classes > 2:
             self.objective_type = "multi:softmax"
 
-        study = optuna_tune(self.name, self.objective, X=X, y=y, metric=metric, timeout=timeout, random_state=self.random_state)
+        study = tune_optuna(
+            self.name,
+            self.objective,
+            X=X,
+            y=y,
+            scorer=scorer,
+            timeout=timeout,
+            random_state=self.random_state,
+        )
 
         # set best parameters
         for key, val in study.best_params.items():
