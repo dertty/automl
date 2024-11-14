@@ -150,7 +150,7 @@ class LogisticRegression(BaseModel):
             log.info(f"{self.name} fold {i}", msg_type="fit")
 
             # initialize fold model
-            fold_model = LogRegSklearn(**self.params)
+            fold_model = LogRegSklearn(**self.inner_params)
 
             # suppress annoying sklearn ConvergenceWarning
             with SuppressWarnings():
@@ -234,6 +234,7 @@ class LogisticRegression(BaseModel):
             if i == 0 or scorer.is_better(iter_metric, best_metric):
                 best_metric = iter_metric
                 best_C = C
+                log.info(f"C={best_C}, metric={best_metric}", msg_type="params")
 
         self.C = float(best_C)
 
@@ -252,7 +253,7 @@ class LogisticRegression(BaseModel):
         return y_pred
 
     @property
-    def params(self):
+    def inner_params(self):
         return {
             "C": self.C,
             "class_weight": self.class_weight,
@@ -260,3 +261,11 @@ class LogisticRegression(BaseModel):
             "n_jobs": self.n_jobs,
             "random_state": self.random_state,
         }
+
+    @property
+    def meta_params(self):
+        return {"time_series": self.time_series}
+
+    @property
+    def params(self):
+        return {**self.inner_params, **self.meta_params}

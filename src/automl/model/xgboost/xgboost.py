@@ -11,6 +11,7 @@ from ...loggers import get_logger
 from ..base_model import BaseModel
 from ..type_hints import FeaturesType, TargetType
 from ..utils import LogWhenImproved, convert_to_numpy, convert_to_pandas
+from .metrics import get_eval_metric
 
 log = get_logger(__name__)
 
@@ -257,7 +258,7 @@ class XGBClassification(BaseModel):
     def __init__(
         self,
         objective="binary:logistic",
-        n_estimators=100,
+        n_estimators=2000,
         learning_rate=0.03,
         max_leaves=None,
         max_depth=None,
@@ -274,8 +275,10 @@ class XGBClassification(BaseModel):
         max_cat_to_onehot=5,
         n_jobs=6,
         random_state=42,
+        verbosity=0,
         class_weight=None,
         time_series=False,
+        eval_metric=None,
     ):
 
         self.name = "XGBClassification"
@@ -301,9 +304,10 @@ class XGBClassification(BaseModel):
 
         self.n_jobs = n_jobs
         self.random_state = random_state
-        self.verbosity = 0
+        self.verbosity = verbosity
         self.early_stopping_rounds = early_stopping_rounds
         self.time_series = time_series
+        self.eval_metric = eval_metric
 
         if self.time_series:
             self.kf = TimeSeriesSplit(n_splits=5)
@@ -336,7 +340,7 @@ class XGBClassification(BaseModel):
         for i, (train_idx, test_idx) in enumerate(cv):
             log.info(f"{self.name} fold {i}", msg_type="fit")
 
-            params = self.params
+            inner_params = self.inner_params
 
             sample_weight = compute_sample_weight(class_weight=None, y=y[train_idx])
 
@@ -346,14 +350,14 @@ class XGBClassification(BaseModel):
             if self.n_classes == 2 and self.class_weight == "balanced":
                 # binary case
                 class_count = np.bincount(y[train_idx].astype(int))
-                params["scale_pos_weight"] = class_count[0] / class_count[1]
+                inner_params["scale_pos_weight"] = class_count[0] / class_count[1]
             elif self.n_classes > 2 and self.class_weight == "balanced":
                 # multiclass case
                 sample_weight = compute_sample_weight(
                     class_weight="balanced", y=y[train_idx]
                 )
 
-            fold_model = XGBClass(**params)
+            fold_model = XGBClass(**inner_params, eval_metric=self.eval_metric)
 
             # fit/predict fold model
             fold_model.fit(
@@ -394,20 +398,6 @@ class XGBClassification(BaseModel):
 
         return param_distr
 
-    def get_not_tuned_params(self):
-        not_tuned_params = {
-            "objective": self.objective_type,
-            "n_estimators": 2000,
-            "learning_rate": self.learning_rate,
-            "verbosity": self.verbosity,
-            "early_stopping_rounds": self.early_stopping_rounds,
-            "enable_categorical": self.enable_categorical,
-            "max_cat_to_onehot": self.max_cat_to_onehot,
-            "n_jobs": self.n_jobs,
-            "random_state": self.random_state,
-        }
-        return not_tuned_params
-
     def objective(self, trial, X, y, scorer):
         """
         Perform cross-validation to evaluate the model.
@@ -416,7 +406,7 @@ class XGBClassification(BaseModel):
         cv = self.kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
-        not_tuned_params = self.get_not_tuned_params()
+        not_tuned_params = self.not_tuned_params
 
         class_weight = trial_params.pop("class_weight")
 
@@ -437,7 +427,10 @@ class XGBClassification(BaseModel):
                 sample_weight = compute_sample_weight(
                     class_weight="balanced", y=y[train_idx]
                 )
-            model = XGBClass(**trial_params, **not_tuned_params)
+
+            model = XGBClass(
+                **trial_params, **not_tuned_params, eval_metric=self.eval_metric
+            )
             model.fit(
                 X.iloc[train_idx],
                 y[train_idx],
@@ -445,7 +438,9 @@ class XGBClassification(BaseModel):
                 verbose=False,
                 sample_weight=sample_weight,
             )
+
             y_pred = model.predict_proba(X.iloc[test_idx])
+
             if y_pred.ndim == 2 and y_pred.shape[1] == 2:
                 y_pred = y_pred[:, 1]
 
@@ -468,6 +463,7 @@ class XGBClassification(BaseModel):
         log.info(f"Tuning {self.name}", msg_type="start")
 
         self.categorical_features = categorical_features
+        self.eval_metric = get_eval_metric(scorer)
 
         X = deepcopy(convert_to_pandas(X))
         X.loc[:, self.categorical_features] = X[self.categorical_features].astype(
@@ -520,11 +516,21 @@ class XGBClassification(BaseModel):
         return y_pred
 
     @property
-    def params(self):
+    def not_tuned_params(self):
         return {
-            "objective": self.objective_type,
             "n_estimators": self.n_estimators,
             "learning_rate": self.learning_rate,
+            "verbosity": self.verbosity,
+            "early_stopping_rounds": self.early_stopping_rounds,
+            "enable_categorical": self.enable_categorical,
+            "max_cat_to_onehot": self.max_cat_to_onehot,
+            "n_jobs": self.n_jobs,
+            "random_state": self.random_state,
+        }
+
+    @property
+    def inner_params(self):
+        return {
             "max_depth": self.max_depth,
             "max_leaves": self.max_leaves,
             "grow_policy": self.grow_policy,
@@ -535,11 +541,24 @@ class XGBClassification(BaseModel):
             "colsample_bylevel": self.colsample_bylevel,
             "reg_lambda": self.reg_lambda,
             "reg_alpha": self.reg_alpha,
-            "enable_categorical": self.enable_categorical,
-            "max_cat_to_onehot": self.max_cat_to_onehot,
-            "n_jobs": self.n_jobs,
-            "random_state": self.random_state,
-            "verbosity": self.verbosity,
-            "early_stopping_rounds": self.early_stopping_rounds,
             "class_weight": self.class_weight,
+            **self.not_tuned_params,
+        }
+
+    @property
+    def meta_params(self):
+        return {
+            "eval_metric": (
+                self.eval_metric
+                if isinstance(self.eval_metric, str) or self.eval_metric is None
+                else "custom_metric"
+            ),
+            "time_series": self.time_series,
+        }
+
+    @property
+    def params(self):
+        return {
+            **self.inner_params,
+            **self.meta_params,
         }

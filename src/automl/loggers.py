@@ -4,7 +4,7 @@ from datetime import datetime
 
 import optuna
 
-from .constants import PATH
+from .constants import PATH, is_ml_data_dir_exists
 
 
 def center_text(text: str, max_len: int = 12):
@@ -25,6 +25,7 @@ msg_types_reprs = {
     "new_best": center_text("NEW BEST"),
     "best": center_text("BEST  MODEL"),
     "model": center_text("MODEL"),
+    "params": center_text("PARAMS")
 }
 
 # disable default optuna logs
@@ -97,10 +98,14 @@ def get_logger(name):
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
 
-    # info file handler is set automatically by the root logger
-    # logger.addHandler(get_error_file_handler())
+    # add stdout handlers
     logger.addHandler(get_info_stream_handler())
     logger.addHandler(get_error_stream_handler())
+    
+    if is_ml_data_dir_exists():
+        # add file handlers
+        logger.addHandler(get_info_file_handler())
+        logger.addHandler(get_error_file_handler())
 
     logger = LoggerAdapterWithMessageTypes(logger, {"msg_type": None})
 
@@ -110,8 +115,8 @@ def get_logger(name):
     return logger
 
 
-def configure_root_logger():
-    # for LightAutoML logs
-    root_logger = logging.getLogger()
-    root_logger.addHandler(get_info_file_handler())
-    root_logger.addHandler(get_error_file_handler())
+# def configure_root_logger():
+#     # for LightAutoML logs
+#     root_logger = logging.getLogger()
+#     root_logger.addHandler(get_info_file_handler())
+#     root_logger.addHandler(get_error_file_handler())

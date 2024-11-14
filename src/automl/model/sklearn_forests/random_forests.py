@@ -251,7 +251,7 @@ class RandomForestClassification(BaseModel):
             log.info(f"{self.name} fold {i}", msg_type="fit")
 
             # initialize fold model
-            fold_model = RFClassSklearn(**self.params)
+            fold_model = RFClassSklearn(**self.inner_params)
 
             # fit/predict fold model
             fold_model.fit(X[train_idx], y[train_idx])
@@ -285,18 +285,11 @@ class RandomForestClassification(BaseModel):
 
         return param_distr
 
-    def get_not_tuned_params(self):
-        return {
-            "n_jobs": self.n_jobs,
-            "random_state": self.random_state,
-            "verbose": self.verbose,
-        }
-
     def objective(self, trial, X, y, scorer):
         cv = self.kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
-        not_tuned_params = self.get_not_tuned_params()
+        not_tuned_params = self.not_tuned_params
 
         model = RFClassSklearn(**trial_params, **not_tuned_params)
 
@@ -365,7 +358,15 @@ class RandomForestClassification(BaseModel):
         return y_pred
 
     @property
-    def params(self):
+    def not_tuned_params(self):
+        return {
+            "n_jobs": self.n_jobs,
+            "random_state": self.random_state,
+            "verbose": self.verbose,
+        }
+
+    @property
+    def inner_params(self):
         return {
             "n_estimators": self.n_estimators,
             "criterion": self.criterion,
@@ -376,7 +377,14 @@ class RandomForestClassification(BaseModel):
             "bootstrap": self.bootstrap,
             "oob_score": self.oob_score,
             "max_samples": self.max_samples,
-            "n_jobs": self.n_jobs,
-            "random_state": self.random_state,
             "class_weight": self.class_weight,
+            **self.not_tuned_params,
         }
+
+    @property
+    def meta_params(self):
+        return {"time_series": self.time_series}
+
+    @property
+    def params(self):
+        return {**self.inner_params, **self.meta_params}

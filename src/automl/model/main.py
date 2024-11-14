@@ -5,7 +5,7 @@ import numpy as np
 from typing_extensions import Self
 
 from ..constants import PATH, create_ml_data_dir
-from ..loggers import configure_root_logger, get_logger
+from ..loggers import get_logger
 from ..metrics import get_scorer
 from .catboost import CatBoostClassification, CatBoostRegression
 from .lama import TabularLama, TabularLamaNN, TabularLamaUtilized
@@ -47,8 +47,9 @@ class AutoML:
 
         # create directory for storing artefacts
         create_ml_data_dir()
-        # configure root logger to log in files
-        configure_root_logger()
+
+        global log
+        log = get_logger(__name__)
 
         self.models_list = models_list
         if self.models_list is None:
@@ -346,4 +347,5 @@ class AutoML:
             # binary classifiation
             if len(np.unique(y_true)) <= 2:
                 return self.scorer.score(y_true, y_pred[:, 1])
+
         return self.scorer.score(y_true, y_pred)

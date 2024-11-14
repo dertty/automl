@@ -256,7 +256,7 @@ class LightGBMClassification(BaseModel):
         self,
         objective_type="binary",
         boosting="gbdt",
-        num_iterations=100,
+        num_iterations=2000,
         learning_rate=0.03,
         max_depth=-1,
         num_leaves=31,
@@ -274,6 +274,7 @@ class LightGBMClassification(BaseModel):
         random_state=42,
         time_series=False,
         eval_metric=None,
+        verbose=-1,
     ):
 
         self.name = "LightGBMClassification"
@@ -299,7 +300,7 @@ class LightGBMClassification(BaseModel):
 
         self.n_jobs = n_jobs
         self.random_state = random_state
-        self.verbose = -1
+        self.verbose = verbose
         self.time_series = time_series
         self.eval_metric = eval_metric
 
@@ -331,23 +332,23 @@ class LightGBMClassification(BaseModel):
         for i, (train_idx, test_idx) in enumerate(cv):
             log.info(f"{self.name} fold {i}", msg_type="fit")
 
-            params = self.get_params()
+            inner_params = self.inner_params
 
             # BUG LightGBM produces very annoying alias warning.
             # Temp fix is to rename all the input parameters.
             # In the recent versions of lightgbm the issue is solved.
-            params["colsample_bytree"] = params.pop("feature_fraction")
-            params["reg_alpha"] = params.pop("lambda_l1")
-            params["subsample"] = params.pop("bagging_fraction")
-            params["min_child_samples"] = params.pop("min_data_in_leaf")
-            params["min_split_gain"] = params.pop("min_gain_to_split")
-            params["subsample_freq"] = params.pop("bagging_freq")
-            params["reg_lambda"] = params.pop("lambda_l2")
+            inner_params["colsample_bytree"] = inner_params.pop("feature_fraction")
+            inner_params["reg_alpha"] = inner_params.pop("lambda_l1")
+            inner_params["subsample"] = inner_params.pop("bagging_fraction")
+            inner_params["min_child_samples"] = inner_params.pop("min_data_in_leaf")
+            inner_params["min_split_gain"] = inner_params.pop("min_gain_to_split")
+            inner_params["subsample_freq"] = inner_params.pop("bagging_freq")
+            inner_params["reg_lambda"] = inner_params.pop("lambda_l2")
 
-            params["boosting_type"] = params.pop("boosting")
+            inner_params["boosting_type"] = inner_params.pop("boosting")
 
             # fit/predict fold model
-            fold_model = lgb.LGBMClassifier(**params)
+            fold_model = lgb.LGBMClassifier(**inner_params)
             fold_model.fit(
                 X.iloc[train_idx],
                 y[train_idx],
@@ -377,37 +378,15 @@ class LightGBMClassification(BaseModel):
             "lambda_l2": trial.suggest_float("lambda_l2", 0, 10),
             "min_gain_to_split": trial.suggest_float("min_gain_to_split", 0, 20),
             "is_unbalance": trial.suggest_categorical("is_unbalance", [True, False]),
-            "num_iterations": 2000,
         }
 
         return param_distr
-
-    def get_not_tuned_params(self, outer=False):
-        """
-        Args:
-            outer (bool, optional): Whether to return outer parameters.
-                Outer parameters are used to initialize self, while inner
-                parameters are used to initialize core model. Defaults to False.
-        """
-        not_tuned_params = {
-            "boosting": "gbdt",
-            "learning_rate": self.learning_rate,
-            "objective_type": self.objective_type,
-            "early_stopping_round": self.early_stopping_round,
-            "n_jobs": self.n_jobs,
-            "random_state": self.random_state,
-        }
-        if outer:
-            not_tuned_params["eval_metric"] = self.eval_metric
-        if not outer:
-            not_tuned_params["verbose"] = self.verbose
-        return not_tuned_params
 
     def objective(self, trial, X, y, scorer):
         cv = self.kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
-        not_tuned_params = self.get_not_tuned_params()
+        not_tuned_params = self.not_tuned_params
 
         # BUG LightGBM produces very annoying alias warning.
         # Temp fix is to rename all the input parameters.
@@ -513,7 +492,7 @@ class LightGBMClassification(BaseModel):
         self.num_iterations = study.best_trial.user_attrs["num_iterations"]
 
         log.info(f"{len(study.trials)} trials completed", msg_type="optuna")
-        log.info(f"{self.get_params(outer=True)}", msg_type="best_params")
+        log.info(f"{self.params}", msg_type="best_params")
         log.info(f"Tuning {self.name}", msg_type="end")
 
     def _predict(self, X_test):
@@ -527,9 +506,21 @@ class LightGBMClassification(BaseModel):
         y_pred = y_pred / len(self.models)
         return y_pred
 
-    def get_params(self, outer=False):
-        params = {
+    @property
+    def not_tuned_params(self):
+        return {
             "num_iterations": self.num_iterations,
+            "boosting": "gbdt",
+            "learning_rate": self.learning_rate,
+            "early_stopping_round": self.early_stopping_round,
+            "n_jobs": self.n_jobs,
+            "random_state": self.random_state,
+            "verbose": self.verbose,
+        }
+
+    @property
+    def inner_params(self):
+        params = {
             "max_depth": self.max_depth,
             "num_leaves": self.num_leaves,
             "min_data_in_leaf": self.min_data_in_leaf,
@@ -541,6 +532,24 @@ class LightGBMClassification(BaseModel):
             "min_gain_to_split": self.min_gain_to_split,
             "is_unbalance": self.is_unbalance,
             "class_weight": self.class_weight,
-            **self.get_not_tuned_params(outer),
+            **self.not_tuned_params,
         }
         return params
+
+    @property
+    def meta_params(self):
+        return {
+            "eval_metric": (
+                self.eval_metric
+                if isinstance(self.eval_metric, str) or self.eval_metric is None
+                else "custom_metric"
+            ),
+            "time_series": self.time_series,
+        }
+
+    @property
+    def params(self):
+        return {
+            **self.inner_params,
+            **self.meta_params,
+        }

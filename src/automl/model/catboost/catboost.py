@@ -269,7 +269,7 @@ class CatBoostClassification(BaseModel):
     def __init__(
         self,
         boosting_type="Plain",
-        iterations=None,
+        iterations=2000,
         learning_rate=0.03,
         max_leaves=None,
         depth=None,
@@ -283,10 +283,13 @@ class CatBoostClassification(BaseModel):
         bootstrap_type=None,
         one_hot_max_size=10,
         auto_class_weights=None,
-        n_jobs=6,
+        thread_count=6,
         random_state=42,
         time_series=False,
         eval_metric=None,
+        verbose=False,
+        allow_writing_files=False,
+        n_jobs=None,
     ):
 
         self.name = "CatBoostClassification"
@@ -308,12 +311,17 @@ class CatBoostClassification(BaseModel):
         self.one_hot_max_size = one_hot_max_size
         self.auto_class_weights = auto_class_weights
 
-        self.thread_count = n_jobs
+        self.n_jobs = n_jobs
+        self.thread_count = thread_count
         self.random_state = random_state
-        self.verbose = False
-        self.allow_writing_files = False
+        self.verbose = verbose
+        self.allow_writing_files = allow_writing_files
         self.time_series = time_series
         self.eval_metric = eval_metric
+
+        # correct alias params
+        if self.n_jobs is not None:
+            self.thread_count = self.n_jobs
 
         if self.time_series:
             self.kf = TimeSeriesSplit(n_splits=5)
@@ -346,7 +354,8 @@ class CatBoostClassification(BaseModel):
             )
 
             # initialize fold model
-            fold_model = CBClass(**self.get_params())
+            fold_model = CBClass(**self.inner_params, eval_metric=self.eval_metric)
+
             # fit/predict fold model
             fold_model.fit(train_data, eval_set=test_data)
             oof_preds[test_idx] = fold_model.predict_proba(test_data)
@@ -392,7 +401,6 @@ class CatBoostClassification(BaseModel):
             "auto_class_weights": trial.suggest_categorical(
                 "auto_class_weights", [None, "Balanced", "SqrtBalanced"]
             ),
-            "iterations": 2000,
         }
 
         if param_distr["grow_policy"] == "Lossguide":
@@ -400,39 +408,11 @@ class CatBoostClassification(BaseModel):
 
         return param_distr
 
-    def get_not_tuned_params(self, outer=False):
-        """
-        Args:
-            outer (bool, optional): Whether to return outer parameters.
-                Outer parameters are used to initialize self, while inner
-                parameters are used to initialize core model. Defaults to False.
-        """
-        not_tuned_params = {
-            "one_hot_max_size": self.one_hot_max_size,
-            "learning_rate": self.learning_rate,
-            "random_state": self.random_state,
-        }
-        if outer:
-            not_tuned_params["n_jobs"] = self.thread_count
-            not_tuned_params["time_series"] = self.time_series
-            not_tuned_params["eval_metric"] = (
-                self.eval_metric
-                if isinstance(self.eval_metric, str) or self.eval_metric is None
-                else "custom_metric"
-            )
-        else:
-            not_tuned_params["thread_count"] = self.thread_count
-            not_tuned_params["verbose"] = self.verbose
-            not_tuned_params["allow_writing_files"] = self.allow_writing_files
-            not_tuned_params["eval_metric"] = self.eval_metric
-
-        return not_tuned_params
-
     def objective(self, trial, X, y, scorer):
         cv = self.kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
-        not_tuned_params = self.get_not_tuned_params()
+        not_tuned_params = self.not_tuned_params
 
         cv_metrics = []
         best_num_iterations = []
@@ -444,7 +424,9 @@ class CatBoostClassification(BaseModel):
                 X.iloc[test_idx], y[test_idx], cat_features=self.cat_features
             )
 
-            model = CBClass(**trial_params, **not_tuned_params)
+            model = CBClass(
+                **trial_params, **not_tuned_params, eval_metric=self.eval_metric
+            )
 
             model.fit(train_data, eval_set=test_data)
             y_pred = model.predict_proba(test_data)
@@ -499,7 +481,7 @@ class CatBoostClassification(BaseModel):
         self.iterations = study.best_trial.user_attrs["iterations"]
 
         log.info(f"{len(study.trials)} trials completed", msg_type="optuna")
-        log.info(f"{self.get_params(outer=True)}", msg_type="best_params")
+        log.info(f"{self.params}", msg_type="best_params")
         log.info(f"Tuning {self.name}", msg_type="end")
 
     def _predict(self, X_test):
@@ -513,15 +495,21 @@ class CatBoostClassification(BaseModel):
         y_pred = y_pred / len(self.models)
         return y_pred
 
-    def get_params(self, outer=False):
-        """
-        Args:
-            outer (bool, optional): Whether to return outer parameters.
-                Outer parameters are used to initialize self, while inner
-                parameters are used to initialize core model. Defaults to False.
-        """
+    @property
+    def not_tuned_params(self):
         return {
             "iterations": self.iterations,
+            "one_hot_max_size": self.one_hot_max_size,
+            "learning_rate": self.learning_rate,
+            "random_state": self.random_state,
+            "thread_count": self.thread_count,
+            "verbose": self.verbose,
+            "allow_writing_files": self.allow_writing_files,
+        }
+
+    @property
+    def inner_params(self):
+        return {
             "boosting_type": self.boosting_type,
             "max_leaves": self.max_leaves,
             "grow_policy": self.grow_policy,
@@ -533,5 +521,23 @@ class CatBoostClassification(BaseModel):
             "subsample": self.subsample,
             "min_data_in_leaf": self.min_data_in_leaf,
             "auto_class_weights": self.auto_class_weights,
-            **self.get_not_tuned_params(outer),
+            **self.not_tuned_params,
+        }
+
+    @property
+    def meta_params(self):
+        return {
+            "eval_metric": (
+                self.eval_metric
+                if isinstance(self.eval_metric, str) or self.eval_metric is None
+                else "custom_metric"
+            ),
+            "time_series": self.time_series,
+        }
+
+    @property
+    def params(self):
+        return {
+            **self.inner_params,
+            **self.meta_params,
         }
