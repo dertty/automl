@@ -11,9 +11,8 @@ from torch import set_num_threads as set_num_threads_torch
 
 from ...loggers import get_logger
 from ..base_model import BaseModel
-from ..metrics import MSE
 from ..type_hints import FeaturesType, TargetType
-from ..utils import convert_to_pandas
+from ..utils import CatchLamaLogs, convert_to_pandas, seed_everything
 
 warnings.filterwarnings("ignore")
 
@@ -29,7 +28,8 @@ class TabularLama(BaseModel):
         n_jobs=6,
         random_state=42,
         n_folds=5,
-        metric=MSE(),
+        scorer=None,
+        verbose=1,
         time_series=False,
     ):
 
@@ -40,7 +40,7 @@ class TabularLama(BaseModel):
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.n_folds = n_folds
-        self.metric = metric
+        self.scorer = scorer
         self.time_series = time_series
 
         if task == "regression":
@@ -48,7 +48,7 @@ class TabularLama(BaseModel):
         else:
             self.task = task
 
-        self.verbose = 1
+        self.verbose = verbose
 
         set_num_threads_torch(self.n_jobs)
 
@@ -56,7 +56,7 @@ class TabularLama(BaseModel):
         log.info(f"Fitting {self.name}", msg_type="start")
 
         self.categorical_features = categorical_features
-        np.random.seed(self.random_state)
+        seed_everything(self.random_state)
 
         X = convert_to_pandas(X)
         data = X.assign(target=y)
@@ -71,28 +71,35 @@ class TabularLama(BaseModel):
         model = TabularAutoML(
             task=Task(
                 name=self.task,
-                metric=self.metric,
-                greater_is_better=self.metric.greater_is_better,
+                metric=self.scorer.score,
+                greater_is_better=self.scorer.greater_is_better,
             ),
             timeout=2 * self.timeout,
             cpu_limit=self.n_jobs,
-            reader_params={"n_jobs": 1, "cv": 5, "random_state": self.random_state},
+            reader_params={
+                "n_jobs": 1,
+                "cv": self.n_folds,
+                "random_state": self.random_state,
+            },
         )
 
         roles = {"target": "target"}
         if len(self.categorical_features) > 0:
             roles["category"] = self.categorical_features
 
-        if self.time_series:
-            artificial_index = np.arange(X.shape[0])
-            oof_preds = model.fit_predict(
-                data,
-                roles=roles,
-                verbose=self.verbose,
-                cv_iter=TimeSeriesIterator(artificial_index),
-            ).data
-        else:
-            oof_preds = model.fit_predict(data, roles=roles, verbose=self.verbose).data
+        with CatchLamaLogs(log):
+            if self.time_series:
+                artificial_index = np.arange(X.shape[0])
+                oof_preds = model.fit_predict(
+                    data,
+                    roles=roles,
+                    verbose=self.verbose,
+                    cv_iter=TimeSeriesIterator(artificial_index),
+                ).data
+            else:
+                oof_preds = model.fit_predict(
+                    data, roles=roles, verbose=self.verbose
+                ).data
 
         # flatten the output in regression case
         # and add 0 class probabilities in binary case
@@ -110,12 +117,12 @@ class TabularLama(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=None,
+        scorer=None,
         timeout=None,
         categorical_features=[],
     ):
         self.timeout = timeout
-        self.metric = metric
+        self.scorer = scorer
         self.categorical_features = categorical_features
 
     def _predict(self, X_test):
@@ -152,8 +159,9 @@ class TabularLamaUtilized(BaseModel):
         n_jobs=6,
         random_state=42,
         n_folds=5,
-        metric=MSE(),
+        scorer=None,
         time_series=False,
+        verbose=1,
     ):
 
         self.name = "TabularLamaUtilized"
@@ -163,7 +171,7 @@ class TabularLamaUtilized(BaseModel):
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.n_folds = n_folds
-        self.metric = metric
+        self.scorer = scorer
         self.time_series = time_series
 
         if task == "regression":
@@ -171,7 +179,7 @@ class TabularLamaUtilized(BaseModel):
         else:
             self.task = task
 
-        self.verbose = 1
+        self.verbose = verbose
 
         set_num_threads_torch(self.n_jobs)
 
@@ -179,7 +187,7 @@ class TabularLamaUtilized(BaseModel):
         log.info(f"Fitting {self.name}", msg_type="start")
 
         self.categorical_features = categorical_features
-        np.random.seed(self.random_state)
+        seed_everything(self.random_state)
 
         X = convert_to_pandas(X)
         data = X.assign(target=y)
@@ -194,28 +202,35 @@ class TabularLamaUtilized(BaseModel):
         model = TabularUtilizedAutoML(
             task=Task(
                 name=self.task,
-                metric=self.metric,
-                greater_is_better=self.metric.greater_is_better,
+                metric=self.scorer.score,
+                greater_is_better=self.scorer.greater_is_better,
             ),
             timeout=2 * self.timeout,
             cpu_limit=self.n_jobs,
-            reader_params={"n_jobs": 1, "cv": 5, "random_state": self.random_state},
+            reader_params={
+                "n_jobs": 1,
+                "cv": self.n_folds,
+                "random_state": self.random_state,
+            },
         )
 
         roles = {"target": "target"}
         if len(self.categorical_features) > 0:
             roles["category"] = self.categorical_features
 
-        if self.time_series:
-            artificial_index = np.arange(X.shape[0])
-            oof_preds = model.fit_predict(
-                data,
-                roles=roles,
-                verbose=self.verbose,
-                cv_iter=TimeSeriesIterator(artificial_index),
-            ).data
-        else:
-            oof_preds = model.fit_predict(data, roles=roles, verbose=self.verbose).data
+        with CatchLamaLogs(log):
+            if self.time_series:
+                artificial_index = np.arange(X.shape[0])
+                oof_preds = model.fit_predict(
+                    data,
+                    roles=roles,
+                    verbose=self.verbose,
+                    cv_iter=TimeSeriesIterator(artificial_index),
+                ).data
+            else:
+                oof_preds = model.fit_predict(
+                    data, roles=roles, verbose=self.verbose
+                ).data
 
         # flatten the output in regression case
         # and add 0 class probabilities in binary case
@@ -233,12 +248,12 @@ class TabularLamaUtilized(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=None,
+        scorer=None,
         timeout=None,
         categorical_features=[],
     ):
         self.timeout = timeout
-        self.metric = metric
+        self.scorer = scorer
         self.categorical_features = categorical_features
 
     def _predict(self, X_test):

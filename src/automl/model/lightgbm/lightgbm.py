@@ -5,9 +5,9 @@ from sklearn.model_selection import KFold, StratifiedKFold, TimeSeriesSplit
 
 from ...loggers import get_logger
 from ..base_model import BaseModel
-from ..metrics import MSE
 from ..type_hints import FeaturesType, TargetType
 from ..utils import LogWhenImproved, convert_to_numpy, convert_to_pandas
+from .metrics import get_eval_metric
 
 log = get_logger(__name__)
 
@@ -136,7 +136,7 @@ class LightGBMRegression(BaseModel):
         }
         return not_tuned_params
 
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, scorer):
         """
         Perform cross-validation to evaluate the model.
         Mean test score is returned.
@@ -169,7 +169,7 @@ class LightGBMRegression(BaseModel):
             )
             y_pred = model.predict(X.iloc[test_idx])
 
-            cv_metrics.append(metric(y[test_idx], y_pred))
+            cv_metrics.append(scorer.score(y[test_idx], y_pred))
             best_num_iterations.append(model.best_iteration)
 
         # add `num_iterations` to the optuna parameters
@@ -181,7 +181,7 @@ class LightGBMRegression(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=MSE(),
+        scorer=None,
         timeout=60,
         categorical_features=[],
     ):
@@ -198,11 +198,11 @@ class LightGBMRegression(BaseModel):
         # optimize parameters
         study = optuna.create_study(
             study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
+            direction="maximize" if scorer.greater_is_better else "minimize",
             sampler=sampler,
         )
         study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
+            lambda trial: self.objective(trial, X, y, scorer),
             timeout=timeout,
             n_jobs=1,
             callbacks=[LogWhenImproved()],
@@ -256,7 +256,7 @@ class LightGBMClassification(BaseModel):
         self,
         objective_type="binary",
         boosting="gbdt",
-        num_iterations=100,
+        num_iterations=2000,
         learning_rate=0.03,
         max_depth=-1,
         num_leaves=31,
@@ -273,6 +273,8 @@ class LightGBMClassification(BaseModel):
         n_jobs=6,
         random_state=42,
         time_series=False,
+        eval_metric=None,
+        verbose=-1,
     ):
 
         self.name = "LightGBMClassification"
@@ -296,10 +298,11 @@ class LightGBMClassification(BaseModel):
         self.is_unbalance = is_unbalance
         self.class_weight = class_weight
 
-        self.num_threads = n_jobs
+        self.n_jobs = n_jobs
         self.random_state = random_state
-        self.verbose = -1
+        self.verbose = verbose
         self.time_series = time_series
+        self.eval_metric = eval_metric
 
         if self.time_series:
             self.kf = TimeSeriesSplit(n_splits=5)
@@ -329,24 +332,23 @@ class LightGBMClassification(BaseModel):
         for i, (train_idx, test_idx) in enumerate(cv):
             log.info(f"{self.name} fold {i}", msg_type="fit")
 
-            params = self.params
+            inner_params = self.inner_params
 
             # BUG LightGBM produces very annoying alias warning.
             # Temp fix is to rename all the input parameters.
             # In the recent versions of lightgbm the issue is solved.
-            params["colsample_bytree"] = params.pop("feature_fraction")
-            params["reg_alpha"] = params.pop("lambda_l1")
-            params["subsample"] = params.pop("bagging_fraction")
-            params["min_child_samples"] = params.pop("min_data_in_leaf")
-            params["min_split_gain"] = params.pop("min_gain_to_split")
-            params["subsample_freq"] = params.pop("bagging_freq")
-            params["reg_lambda"] = params.pop("lambda_l2")
+            inner_params["colsample_bytree"] = inner_params.pop("feature_fraction")
+            inner_params["reg_alpha"] = inner_params.pop("lambda_l1")
+            inner_params["subsample"] = inner_params.pop("bagging_fraction")
+            inner_params["min_child_samples"] = inner_params.pop("min_data_in_leaf")
+            inner_params["min_split_gain"] = inner_params.pop("min_gain_to_split")
+            inner_params["subsample_freq"] = inner_params.pop("bagging_freq")
+            inner_params["reg_lambda"] = inner_params.pop("lambda_l2")
 
-            params["n_jobs"] = params.pop("num_threads")
-            params["boosting_type"] = params.pop("boosting")
+            inner_params["boosting_type"] = inner_params.pop("boosting")
 
             # fit/predict fold model
-            fold_model = lgb.LGBMClassifier(**params)
+            fold_model = lgb.LGBMClassifier(**inner_params)
             fold_model.fit(
                 X.iloc[train_idx],
                 y[train_idx],
@@ -354,6 +356,7 @@ class LightGBMClassification(BaseModel):
                 verbose=False,
                 early_stopping_rounds=self.early_stopping_round,
                 categorical_feature=self.categorical_feature,
+                eval_metric=self.eval_metric,
             )
             oof_preds[test_idx] = fold_model.predict_proba(X.iloc[test_idx])
 
@@ -379,25 +382,11 @@ class LightGBMClassification(BaseModel):
 
         return param_distr
 
-    def get_not_tuned_params(self):
-        not_tuned_params = {
-            "boosting": "gbdt",
-            "num_iterations": 2000,
-            "learning_rate": self.learning_rate,
-            "objective_type": self.objective_type,
-            "num_classes": 1 if self.n_classes == 2 else self.n_classes,
-            "verbose": self.verbose,
-            "early_stopping_round": self.early_stopping_round,
-            "num_threads": self.num_threads,
-            "random_state": self.random_state,
-        }
-        return not_tuned_params
-
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, scorer):
         cv = self.kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
-        not_tuned_params = self.get_not_tuned_params()
+        not_tuned_params = self.not_tuned_params
 
         # BUG LightGBM produces very annoying alias warning.
         # Temp fix is to rename all the input parameters.
@@ -410,7 +399,6 @@ class LightGBMClassification(BaseModel):
         trial_params["subsample_freq"] = trial_params.pop("bagging_freq")
         trial_params["reg_lambda"] = trial_params.pop("lambda_l2")
 
-        not_tuned_params["n_jobs"] = not_tuned_params.pop("num_threads")
         not_tuned_params["boosting_type"] = not_tuned_params.pop("boosting")
 
         # add parameter `class_weight` for multiclass only
@@ -447,11 +435,14 @@ class LightGBMClassification(BaseModel):
                 verbose=False,
                 early_stopping_rounds=not_tuned_params["early_stopping_round"],
                 categorical_feature=self.categorical_feature,
+                eval_metric=self.eval_metric,
             )
-
             y_pred = model.predict_proba(X.iloc[test_idx])
 
-            cv_metrics.append(metric(y[test_idx], y_pred))
+            if y_pred.ndim == 2 and y_pred.shape[1] == 2:
+                y_pred = y_pred[:, 1]
+
+            cv_metrics.append(scorer.score(y[test_idx], y_pred))
             best_num_iterations.append(model.best_iteration_)
 
         # add `num_iterations` to the optuna parameters
@@ -463,7 +454,7 @@ class LightGBMClassification(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=MSE(),
+        scorer=None,
         timeout=60,
         categorical_features=[],
     ):
@@ -475,6 +466,7 @@ class LightGBMClassification(BaseModel):
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
         self.n_classes = np.unique(y).shape[0]
+        self.eval_metric = get_eval_metric(scorer)
 
         if self.n_classes > 2:
             self.objective_type = "multiclass"
@@ -484,11 +476,11 @@ class LightGBMClassification(BaseModel):
         # optimize parameters
         study = optuna.create_study(
             study_name=self.name,
-            direction="maximize" if metric.greater_is_better else "minimize",
+            direction="maximize" if scorer.greater_is_better else "minimize",
             sampler=sampler,
         )
         study.optimize(
-            lambda trial: self.objective(trial, X, y, metric),
+            lambda trial: self.objective(trial, X, y, scorer),
             timeout=timeout,
             n_jobs=1,
             callbacks=[LogWhenImproved()],
@@ -515,31 +507,49 @@ class LightGBMClassification(BaseModel):
         return y_pred
 
     @property
-    def params(self):
-        params = {
-            "objective_type": self.objective_type,
-            "boosting": self.boosting,
+    def not_tuned_params(self):
+        return {
             "num_iterations": self.num_iterations,
-            "max_depth": self.max_depth,
+            "boosting": "gbdt",
             "learning_rate": self.learning_rate,
+            "early_stopping_round": self.early_stopping_round,
+            "n_jobs": self.n_jobs,
+            "random_state": self.random_state,
+            "verbose": self.verbose,
+        }
+
+    @property
+    def inner_params(self):
+        params = {
+            "max_depth": self.max_depth,
             "num_leaves": self.num_leaves,
             "min_data_in_leaf": self.min_data_in_leaf,
             "bagging_fraction": self.bagging_fraction,
             "bagging_freq": self.bagging_freq,
             "feature_fraction": self.feature_fraction,
-            "early_stopping_round": self.early_stopping_round,
             "lambda_l1": self.lambda_l1,
             "lambda_l2": self.lambda_l2,
             "min_gain_to_split": self.min_gain_to_split,
-            "num_threads": self.num_threads,
-            "random_state": self.random_state,
             "is_unbalance": self.is_unbalance,
-            "num_classes": 1 if self.n_classes == 2 else self.n_classes,
-            "verbose": self.verbose,
+            "class_weight": self.class_weight,
+            **self.not_tuned_params,
+        }
+        return params
+
+    @property
+    def meta_params(self):
+        return {
+            "eval_metric": (
+                self.eval_metric
+                if isinstance(self.eval_metric, str) or self.eval_metric is None
+                else "custom_metric"
+            ),
+            "time_series": self.time_series,
         }
 
-        # add parameter `class_weight` for multiclass only
-        if self.n_classes > 2:
-            params["class_weight"] = self.class_weight
-
-        return params
+    @property
+    def params(self):
+        return {
+            **self.inner_params,
+            **self.meta_params,
+        }
