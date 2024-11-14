@@ -1,4 +1,4 @@
-from ..type_hints import FeaturesType, TargetType
+from automl.type_hints import FeaturesType, TargetType
 
 
 class BaseMetric:
@@ -6,10 +6,25 @@ class BaseMetric:
 
         # IMPORTANT to set this attribute
         # comparison between models is performed based on it
-        self.greater_is_better = False
+        self.needs_proba = True
+        self.greater_is_better = True
+        self.is_has_thr = False
+        self.model_type = None
 
     def __call__(self, **kwargs):
         raise NotImplementedError
+    
+    def _get_model_score_name(self):
+        return None
+    
+    def get_score_name(self):
+        return ''
+    
+    def set_thr(self, thr):
+        self.thr = thr
+
+    def get_thr(self):
+        return self.thr
 
     def is_better(self, val1, val2):
         if val1 is None or val2 is None:

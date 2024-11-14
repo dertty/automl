@@ -24,6 +24,18 @@ class BaseModel:
         raise NotImplementedError
 
     @property
+    def not_tuned_params(self):
+        raise NotImplementedError
+
+    @property
+    def inner_params(self):
+        raise NotImplementedError
+
+    @property
+    def meta_params(self):
+        raise NotImplementedError
+
+    @property
     def params(self):
         raise NotImplementedError
 

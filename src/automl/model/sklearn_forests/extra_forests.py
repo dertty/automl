@@ -11,7 +11,6 @@ from sklearn.model_selection import (
 
 from ...loggers import get_logger
 from ..base_model import BaseModel
-from ..metrics import MSE
 from ..type_hints import FeaturesType, TargetType
 from ..utils import optuna_tune, convert_to_numpy
 
@@ -113,7 +112,7 @@ class ExtraTreesRegression(BaseModel):
             "verbose": self.verbose,
         }
 
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, scorer):
         cv = self.kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
@@ -124,14 +123,14 @@ class ExtraTreesRegression(BaseModel):
             model,
             X,
             y,
-            scoring=metric.get_scorer(),
+            scoring=scorer,
             cv=cv,
         )
 
         # if not `greater_is_better` the scores will be negaitive
         # multiply by the `sign` to always return positive score
         sign = 1
-        if not metric.greater_is_better:
+        if not scorer.greater_is_better:
             sign = -1
 
         return sign * np.mean(scores["test_score"])
@@ -140,7 +139,7 @@ class ExtraTreesRegression(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=MSE(),
+        scorer=None,
         timeout=60,
         categorical_features=[],
     ):
@@ -245,7 +244,7 @@ class ExtraTreesClassification(BaseModel):
             log.info(f"{self.name} fold {i}", msg_type="fit")
 
             # initialize fold model
-            fold_model = EXClasSklearn(**self.params)
+            fold_model = EXClasSklearn(**self.inner_params)
 
             # fit/predict fold model
             fold_model.fit(X[train_idx], y[train_idx])
@@ -279,18 +278,11 @@ class ExtraTreesClassification(BaseModel):
 
         return param_distr
 
-    def get_not_tuned_params(self):
-        return {
-            "n_jobs": self.n_jobs,
-            "random_state": self.random_state,
-            "verbose": self.verbose,
-        }
-
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, scorer):
         cv = self.kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
-        not_tuned_params = self.get_not_tuned_params()
+        not_tuned_params = self.not_tuned_params
 
         model = EXClasSklearn(**trial_params, **not_tuned_params)
 
@@ -298,14 +290,14 @@ class ExtraTreesClassification(BaseModel):
             model,
             X,
             y,
-            scoring=metric.get_scorer(),
+            scoring=scorer,
             cv=cv,
         )
 
         # if not `greater_is_better` the scores will be negaitive
         # multiply by the `sign` to always return positive score
         sign = 1
-        if not metric.greater_is_better:
+        if not scorer.greater_is_better:
             sign = -1
 
         return sign * np.mean(scores["test_score"])
@@ -314,7 +306,7 @@ class ExtraTreesClassification(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=MSE(),
+        scorer=None,
         timeout=60,
         categorical_features=[],
     ):
@@ -346,7 +338,15 @@ class ExtraTreesClassification(BaseModel):
         return y_pred
 
     @property
-    def params(self):
+    def not_tuned_params(self):
+        return {
+            "n_jobs": self.n_jobs,
+            "random_state": self.random_state,
+            "verbose": self.verbose,
+        }
+
+    @property
+    def inner_params(self):
         return {
             **self.get_not_tuned_params(),
             "n_estimators": self.n_estimators,
@@ -359,4 +359,13 @@ class ExtraTreesClassification(BaseModel):
             "oob_score": self.oob_score,
             "max_samples": self.max_samples,
             "class_weight": self.class_weight,
+            **self.not_tuned_params,
         }
+
+    @property
+    def meta_params(self):
+        return {"time_series": self.time_series}
+
+    @property
+    def params(self):
+        return {**self.inner_params, **self.meta_params}

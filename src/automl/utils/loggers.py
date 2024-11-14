@@ -2,35 +2,19 @@ import logging
 import sys
 from datetime import datetime
 
-import optuna
-
-from .constants import PATH, is_ml_data_dir_exists
-
-
-def center_text(text: str, max_len: int = 12):
-    """Pads the text with whitespaces to center it."""
-    pad_right = (max_len - len(text)) // 2
-    pad_left = max_len - len(text) - pad_right
-    return " " * pad_right + text + " " * pad_left
-
 
 _log_format = f"[%(asctime)s] - %(message)s"
 msg_types_reprs = {
-    "start": center_text("START"),
-    "end": center_text("END"),
-    "score": center_text("SCORE"),
-    "best_params": center_text("BEST PARAMS"),
-    "fit": center_text("FIT"),
-    "optuna": center_text("OPTUNA"),
-    "new_best": center_text("NEW BEST"),
-    "best": center_text("BEST  MODEL"),
-    "model": center_text("MODEL"),
-    "params": center_text("PARAMS")
+    "start":       "   START   ",
+    "end":         "    END    ",
+    "score":       "   SCORE   ",
+    "best_params": "BEST PARAMS",
+    "fit":         "    FIT    ",
+    "optuna":      "   OPTUNA  ",
+    "new_best":    "  NEW BEST ",
+    "best":        "BEST  MODEL",
+    "model":       "   MODEL   ",
 }
-
-# disable default optuna logs
-# custom optuna logs are implemented
-optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 
 class LoggerAdapterWithMessageTypes(logging.LoggerAdapter):
@@ -98,14 +82,10 @@ def get_logger(name):
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
 
-    # add stdout handlers
+    # info file handler is set automatically by the root logger
+    # logger.addHandler(get_error_file_handler())
     logger.addHandler(get_info_stream_handler())
     logger.addHandler(get_error_stream_handler())
-    
-    if is_ml_data_dir_exists():
-        # add file handlers
-        logger.addHandler(get_info_file_handler())
-        logger.addHandler(get_error_file_handler())
 
     logger = LoggerAdapterWithMessageTypes(logger, {"msg_type": None})
 
@@ -115,8 +95,8 @@ def get_logger(name):
     return logger
 
 
-# def configure_root_logger():
-#     # for LightAutoML logs
-#     root_logger = logging.getLogger()
-#     root_logger.addHandler(get_info_file_handler())
-#     root_logger.addHandler(get_error_file_handler())
+def configure_root_logger():
+    # for LightAutoML logs
+    root_logger = logging.getLogger()
+    root_logger.addHandler(get_info_file_handler())
+    root_logger.addHandler(get_error_file_handler())

@@ -1,10 +1,12 @@
-from typing import List, Self, Union
+from typing import List, Union
 
 import joblib
 import numpy as np
+from typing_extensions import Self
 
 from ..constants import PATH, create_ml_data_dir
-from ..loggers import configure_root_logger, get_logger
+from ..loggers import get_logger
+from ..metrics import get_scorer
 from .catboost import CatBoostClassification, CatBoostRegression
 from .lama import TabularLama, TabularLamaNN, TabularLamaUtilized
 from .lightgbm import LightGBMClassification, LightGBMRegression
@@ -33,9 +35,9 @@ class AutoML:
         random_state: int = 42,
         tuning_timeout=60,
     ):
-
         self.task = task
         self.metric = metric
+        self.scorer = get_scorer(metric)
         self.time_series = time_series
         self.n_jobs = n_jobs
         self.random_state = random_state
@@ -45,8 +47,9 @@ class AutoML:
 
         # create directory for storing artefacts
         create_ml_data_dir()
-        # configure root logger to log in files
-        configure_root_logger()
+
+        global log
+        log = get_logger(__name__)
 
         self.models_list = models_list
         if self.models_list is None:
@@ -270,7 +273,7 @@ class AutoML:
             model.tune(
                 X,
                 y,
-                metric=self.metric,
+                scorer=self.scorer,
                 timeout=self.tuning_timeout,
                 categorical_features=categorical_features,
             )
@@ -318,7 +321,7 @@ class AutoML:
 
             # compare current model with the best model
             # if metric is better -> new best model
-            if i == 0 or self.metric.is_better(test_scores, self.best_score):
+            if i == 0 or self.scorer.is_better(test_scores, self.best_score):
                 self.best_model = model
                 self.best_score = test_scores
                 log.info(
@@ -340,4 +343,9 @@ class AutoML:
         return y_pred
 
     def evaluate(self, y_true: TargetType, y_pred: TargetType):
-        return self.metric(y_true, y_pred)
+        if self.task == "classification":
+            # binary classifiation
+            if len(np.unique(y_true)) <= 2:
+                return self.scorer.score(y_true, y_pred[:, 1])
+
+        return self.scorer.score(y_true, y_pred)

@@ -7,9 +7,9 @@ from sklearn.model_selection import KFold, StratifiedKFold, TimeSeriesSplit
 
 from ...loggers import get_logger
 from ..base_model import BaseModel
-from ..metrics import MSE
 from ..type_hints import FeaturesType, TargetType
-from ..utils import optuna_tune, convert_to_numpy, convert_to_pandas
+from ..utils import LogWhenImproved, convert_to_numpy, convert_to_pandas, optuna_tune
+from .metrics import get_eval_metric
 
 log = get_logger(__name__)
 
@@ -37,7 +37,6 @@ class CatBoostRegression(BaseModel):
         time_series=False,
         od_type='Iter',
     ):
-
         self.name = "CatBoostRegression"
         self.cat_features = []
 
@@ -170,7 +169,7 @@ class CatBoostRegression(BaseModel):
             not_tuned_params["od_pval"] = 1e-5
         return not_tuned_params
 
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, scorer):
         cv = self.kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
@@ -191,7 +190,7 @@ class CatBoostRegression(BaseModel):
             model.fit(train_data, eval_set=test_data)
             y_pred = model.predict(test_data)
 
-            cv_metrics.append(metric(y[test_idx], y_pred))
+            cv_metrics.append(scorer.score(y[test_idx], y_pred))
             best_num_iterations.append(model.best_iteration_)
 
         # add `iterations`` to the optuna parameters
@@ -203,7 +202,7 @@ class CatBoostRegression(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=MSE(),
+        scorer=None,
         timeout=60,
         categorical_features=[],
     ):
@@ -258,8 +257,8 @@ class CatBoostRegression(BaseModel):
 class CatBoostClassification(BaseModel):
     def __init__(
         self,
-        boosting_type="Ordered",
-        iterations=None,
+        boosting_type="Plain",
+        iterations=2000,
         learning_rate=0.03,
         max_leaves=None,
         depth=None,
@@ -273,10 +272,14 @@ class CatBoostClassification(BaseModel):
         bootstrap_type=None,
         one_hot_max_size=10,
         auto_class_weights=None,
-        n_jobs=6,
+        thread_count=6,
         random_state=42,
         time_series=False,
-        od_type='Iter',
+        eval_metric=None,
+        verbose=False,
+        allow_writing_files=False,
+        n_jobs=None,
+        od_type='Iter'
     ):
 
         self.name = "CatBoostClassification"
@@ -297,13 +300,19 @@ class CatBoostClassification(BaseModel):
         self.min_data_in_leaf = min_data_in_leaf
         self.one_hot_max_size = one_hot_max_size
         self.auto_class_weights = auto_class_weights
+
+        self.n_jobs = n_jobs
+        self.thread_count = thread_count
         self.od_type = od_type
-        
-        self.thread_count = n_jobs
         self.random_state = random_state
-        self.verbose = False
-        self.allow_writing_files = False
+        self.verbose = verbose
+        self.allow_writing_files = allow_writing_files
         self.time_series = time_series
+        self.eval_metric = eval_metric
+
+        # correct alias params
+        if self.n_jobs is not None:
+            self.thread_count = self.n_jobs
 
         if self.time_series:
             self.kf = TimeSeriesSplit(n_splits=5)
@@ -336,7 +345,7 @@ class CatBoostClassification(BaseModel):
             )
 
             # initialize fold model
-            fold_model = CBClass(**self.params)
+            fold_model = CBClass(**self.inner_params, eval_metric=self.eval_metric)
 
             # fit/predict fold model
             fold_model.fit(train_data, eval_set=test_data)
@@ -390,30 +399,11 @@ class CatBoostClassification(BaseModel):
 
         return param_distr
 
-    def get_not_tuned_params(self):
-        not_tuned_params = {
-            "iterations": 2000,
-            "one_hot_max_size": self.one_hot_max_size,
-            "learning_rate": self.learning_rate,
-            "thread_count": self.thread_count,
-            "random_state": self.random_state,
-            "verbose": self.verbose,
-            "allow_writing_files": self.allow_writing_files,
-            "od_type": self.od_type,
-            "od_wait": self.od_wait,
-            'use_best_model': True,
-        }
-        if not_tuned_params.get('od_type', 'Iter') == 'Iter':
-            not_tuned_params["od_pval"] = 0
-        else:
-            not_tuned_params["od_pval"] = 1e-5
-        return not_tuned_params
-
-    def objective(self, trial, X, y, metric):
+    def objective(self, trial, X, y, scorer):
         cv = self.kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
-        not_tuned_params = self.get_not_tuned_params()
+        not_tuned_params = self.not_tuned_params
 
         cv_metrics = []
         best_num_iterations = []
@@ -425,15 +415,21 @@ class CatBoostClassification(BaseModel):
                 X.iloc[test_idx], y[test_idx], cat_features=self.cat_features
             )
 
-            model = CBClass(**trial_params, **not_tuned_params)
+            model = CBClass(
+                **trial_params, **not_tuned_params, eval_metric=self.eval_metric
+            )
 
             model.fit(train_data, eval_set=test_data)
             y_pred = model.predict_proba(test_data)
 
-            cv_metrics.append(metric(y[test_idx], y_pred))
+            if y_pred.ndim == 2 and y_pred.shape[1] == 2:
+                # binary case
+                y_pred = y_pred[:, 1]
+
+            cv_metrics.append(scorer.score(y[test_idx], y_pred))
             best_num_iterations.append(model.best_iteration_)
 
-        # add `iterations` as an optuna parameters
+        # add `iterations` as an optuna parameter
         trial.set_user_attr("iterations", round(np.mean(best_num_iterations)))
 
         return np.mean(cv_metrics)
@@ -442,13 +438,14 @@ class CatBoostClassification(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=MSE(),
+        scorer,
         timeout=60,
         categorical_features=[],
     ):
         log.info(f"Tuning {self.name}", msg_type="start")
 
         self.cat_features = categorical_features
+        self.eval_metric = get_eval_metric(scorer)
 
         X = convert_to_pandas(X)
         y = convert_to_numpy(y)
@@ -477,7 +474,24 @@ class CatBoostClassification(BaseModel):
         return y_pred
 
     @property
-    def params(self):
+    def not_tuned_params(self):
+        not_tuned_params = {
+            "iterations": self.iterations,
+            "one_hot_max_size": self.one_hot_max_size,
+            "learning_rate": self.learning_rate,
+            "random_state": self.random_state,
+            "thread_count": self.thread_count,
+            "verbose": self.verbose,
+            "allow_writing_files": self.allow_writing_files,
+        }
+        if not_tuned_params.get('od_type', 'Iter') == 'Iter':
+            not_tuned_params["od_pval"] = 0
+        else:
+            not_tuned_params["od_pval"] = 1e-5
+        return not_tuned_params
+
+    @property
+    def inner_params(self):
         return {
             **self.get_not_tuned_params(),
             "boosting_type": self.boosting_type,
@@ -491,4 +505,23 @@ class CatBoostClassification(BaseModel):
             "subsample": self.subsample,
             "min_data_in_leaf": self.min_data_in_leaf,
             "auto_class_weights": self.auto_class_weights,
+            **self.not_tuned_params,
+        }
+
+    @property
+    def meta_params(self):
+        return {
+            "eval_metric": (
+                self.eval_metric
+                if isinstance(self.eval_metric, str) or self.eval_metric is None
+                else "custom_metric"
+            ),
+            "time_series": self.time_series,
+        }
+
+    @property
+    def params(self):
+        return {
+            **self.inner_params,
+            **self.meta_params,
         }

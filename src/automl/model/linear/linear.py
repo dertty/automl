@@ -73,7 +73,7 @@ class RidgeRegression(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=None,
+        scorer=None,
         timeout=None,
         categorical_features=[],
     ):
@@ -150,7 +150,7 @@ class LogisticRegression(BaseModel):
             log.info(f"{self.name} fold {i}", msg_type="fit")
 
             # initialize fold model
-            fold_model = LogRegSklearn(**self.params)
+            fold_model = LogRegSklearn(**self.inner_params)
 
             # suppress annoying sklearn ConvergenceWarning
             with SuppressWarnings():
@@ -169,7 +169,7 @@ class LogisticRegression(BaseModel):
         self,
         X: FeaturesType,
         y: TargetType,
-        metric=None,
+        scorer=None,
         timeout=None,
         categorical_features=[],
     ):
@@ -219,21 +219,22 @@ class LogisticRegression(BaseModel):
                     model,
                     X,
                     y,
-                    scoring=metric.get_scorer(),
+                    scoring=scorer,
                     cv=cv,
                 )
 
             # if not `greater_is_better` the scores will be negaitive
             # multiply by the `sign` to always return positive score
             sign = 1
-            if not metric.greater_is_better:
+            if not scorer.greater_is_better:
                 sign = -1
 
             iter_metric = sign * np.mean(scores["test_score"])
             # compare iter metric with the best metric
-            if i == 0 or metric.is_better(iter_metric, best_metric):
+            if i == 0 or scorer.is_better(iter_metric, best_metric):
                 best_metric = iter_metric
                 best_C = C
+                log.info(f"C={best_C}, metric={best_metric}", msg_type="params")
 
         self.C = float(best_C)
 
@@ -252,7 +253,7 @@ class LogisticRegression(BaseModel):
         return y_pred
 
     @property
-    def params(self):
+    def inner_params(self):
         return {
             "C": self.C,
             "class_weight": self.class_weight,
@@ -260,3 +261,11 @@ class LogisticRegression(BaseModel):
             "n_jobs": self.n_jobs,
             "random_state": self.random_state,
         }
+
+    @property
+    def meta_params(self):
+        return {"time_series": self.time_series}
+
+    @property
+    def params(self):
+        return {**self.inner_params, **self.meta_params}
