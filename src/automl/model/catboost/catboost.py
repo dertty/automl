@@ -501,6 +501,7 @@ class CatBoostClassification(BaseModel):
             "verbose": self.verbose,
             "allow_writing_files": self.allow_writing_files,
             "od_type": self.od_type,
+            "od_wait": self.od_wait,
         }
         if not_tuned_params.get("od_type", "Iter") == "Iter":
             not_tuned_params["od_pval"] = 0
