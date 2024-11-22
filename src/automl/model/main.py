@@ -10,7 +10,7 @@ from ..metrics import get_scorer
 from .catboost import CatBoostClassification, CatBoostRegression
 from .lama import TabularLama, TabularLamaNN, TabularLamaUtilized
 from .lightgbm import LightGBMClassification, LightGBMRegression
-from .linear import LogisticRegression, RidgeRegression
+from .linear import RidgeRegression
 from .sklearn_forests import (
     ExtraTreesClassification,
     ExtraTreesRegression,
@@ -47,9 +47,6 @@ class AutoML:
 
         # create directory for storing artefacts
         create_ml_data_dir()
-
-        global log
-        log = get_logger(__name__)
 
         self.models_list = models_list
         if self.models_list is None:
@@ -148,11 +145,11 @@ class AutoML:
                 ]
             elif self.task == "classification":
                 self.models_list = [
-                    LogisticRegression(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
+                    # LogisticRegression(
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
                     RandomForestClassification(
                         n_jobs=self.n_jobs,
                         random_state=self.random_state,
@@ -252,8 +249,8 @@ class AutoML:
         self,
         X: FeaturesType,
         y: TargetType,
-        Xs_test: Union[FeaturesType, List[FeaturesType]],
-        ys_test: Union[TargetType, List[TargetType]],
+        Xs_test: Union[FeaturesType, List[FeaturesType]] = None,
+        ys_test: Union[TargetType, List[TargetType]] = None,
         categorical_features=[],
     ) -> Self:
         """If self.time_series == True -> X should be sorted by time."""

@@ -44,6 +44,7 @@ class EarlyStoppingCallback(object):
         self.early_stopping_rounds = early_stopping_rounds
         self.threshold = threshold
         self._iter = 0
+        self.first_trial_flag = True
 
         if direction == "minimize":
             self._operator = operator.lt
@@ -56,6 +57,11 @@ class EarlyStoppingCallback(object):
 
     def __call__(self, study: optuna.Study, trial: optuna.Trial) -> None:
         """Do early stopping."""
+        if self.first_trial_flag:
+            # No trials are completed yet.
+            self.first_trial_flag = False
+            return
+
         if self._operator(study.best_value, self._score):
             if abs(study.best_value - self._score) > self.threshold:
                 self._iter = 0

@@ -16,7 +16,7 @@ class MSE(BaseMetric):
         self.model_type = None
         self.thr = None
 
-    def __call__(self, y_true: TargetType, y_pred: TargetType):
+    def __call__(self, y_true: TargetType, y_pred: TargetType, **kwargs):
         return root_mean_squared_error(y_true, y_pred) ** 2
 
     @property
@@ -32,7 +32,7 @@ class MAE(BaseMetric):
         self.model_type = None
         self.thr = None
 
-    def __call__(self, y_true: TargetType, y_pred: TargetType):
+    def __call__(self, y_true: TargetType, y_pred: TargetType, **kwargs):
         return mean_absolute_error(y_true, y_pred)
 
     @property
@@ -48,7 +48,7 @@ class MAPE(BaseMetric):
         self.model_type = None
         self.thr = None
 
-    def __call__(self, y_true: TargetType, y_pred: TargetType):
+    def __call__(self, y_true: TargetType, y_pred: TargetType, **kwargs):
         return mean_absolute_percentage_error(y_true, y_pred)
 
     @property

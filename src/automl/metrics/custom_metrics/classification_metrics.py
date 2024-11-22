@@ -18,7 +18,9 @@ class Accuracy(BaseMetric):
         self.thr = thr
         self.model_type = None
 
-    def __call__(self, y_true: TargetType, y_pred: TargetType) -> Optional[float]:
+    def __call__(
+        self, y_true: TargetType, y_pred: TargetType, **kwargs
+    ) -> Optional[float]:
         if np.isnan(y_pred).any():
             return None
 
@@ -61,7 +63,7 @@ class RocAuc(BaseMetric):
         self.is_has_thr = False
         self.model_type = None
 
-    def __call__(self, y_true, y_pred) -> Optional[float]:
+    def __call__(self, y_true, y_pred, **kwargs) -> Optional[float]:
         if np.isnan(y_pred).any():
             return None
 

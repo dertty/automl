@@ -1,3 +1,5 @@
+from inspect import signature
+
 from sklearn.metrics import make_scorer
 
 from ..functions import ScorerWrapper
@@ -37,11 +39,23 @@ class BaseMetric:
         return "predict"
 
     def _get_scorer(self):
-        return make_scorer(
-            self,
-            response_method=self.response_method,
-            greater_is_better=self.greater_is_better,
-        )
+        # BUG Dumb problem with sklearn versions.
+        # sklearn >= 1.4.0 supports only `response_method``
+        # sklearn < 1.4.0 supports only `needs_proba``
+        if "response_method" in signature(make_scorer).parameters:
+            # sklearn >= 1.4.0
+            return make_scorer(
+                self,
+                response_method=self.response_method,
+                greater_is_better=self.greater_is_better,
+            )
+        else:
+            # sklearn < 1.4.0
+            return make_scorer(
+                self,
+                needs_proba=self.needs_proba,
+                greater_is_better=self.greater_is_better,
+            )
 
     def get_scorer(self):
         return ScorerWrapper(
