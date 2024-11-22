@@ -2,6 +2,7 @@ from typing import List, Union
 
 import joblib
 import numpy as np
+import pandas as pd
 from typing_extensions import Self
 
 from ..constants import PATH, create_ml_data_dir
@@ -252,6 +253,9 @@ class AutoML:
         Xs_test: Union[FeaturesType, List[FeaturesType]] = None,
         ys_test: Union[TargetType, List[TargetType]] = None,
         categorical_features=[],
+        save_models=True,
+        save_oof=True,
+        save_test=True,
     ) -> Self:
         """If self.time_series == True -> X should be sorted by time."""
 
@@ -295,21 +299,43 @@ class AutoML:
             oof_scores = self.evaluate(y[not_none_oof], oof_preds[not_none_oof])
             log.info(f"OOF: {oof_scores}", msg_type="score")
 
-            # predict on test and evaluate the model
-            ys_pred = model.predict(Xs_test)
-            test_scores = self.evaluate(ys_test, ys_pred)
-            log.info(f"Test: {test_scores}", msg_type="score")
-            log.info(
-                f"Overfit: {(abs(test_scores - train_scores) / train_scores) * 100 :.2f} %",
-                msg_type="score",
-            )
+            if Xs_test is not None and ys_test is not None:
+                # predict on test and evaluate the model
+                ys_pred = model.predict(Xs_test)
+                test_scores = self.evaluate(ys_test, ys_pred)
+                log.info(f"Test: {test_scores}", msg_type="score")
+                log.info(
+                    f"Overfit: {(abs(test_scores - train_scores) / train_scores) * 100 :.2f} %",
+                    msg_type="score",
+                )
+            else:
+                # No test data given
+                # Select the best model based on the oof
+                test_scores = oof_scores
 
             # create model's directory
             model_dir = self.path / model.name
             model_dir.mkdir(exist_ok=True)
 
-            # save the model
-            joblib.dump(model, model_dir / f"{model.name}.joblib")
+            if save_models:
+                # save the model
+                joblib.dump(model, model_dir / f"{model.name}.joblib")
+
+            if save_oof:
+                # save oof predictions
+                pd.DataFrame(
+                    oof_preds[not_none_oof],
+                    columns=[
+                        f"{model.name}_pred_{i}" for i in range(oof_preds.shape[1])
+                    ],
+                ).to_csv(model_dir / f"oof_preds.csv", index=False)
+
+            if save_test and Xs_test is not None and ys_test is not None:
+                # save test predictions
+                pd.DataFrame(
+                    ys_pred,
+                    columns=[f"{model.name}_pred_{i}" for i in range(ys_pred.shape[1])],
+                ).to_csv(model_dir / f"test_preds.csv", index=False)
 
             # save best model's parameters
             save_yaml(model.params, model_dir / f"{model.name}.yaml")
@@ -330,6 +356,7 @@ class AutoML:
                     f"{self.best_model.name}. Best score: {self.best_score} \n",
                     msg_type="best",
                 )
+
         return self
 
     def predict(self, X: FeaturesType, model_name=None):
