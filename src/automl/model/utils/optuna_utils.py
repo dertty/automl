@@ -84,9 +84,13 @@ def tune_optuna(
     y,
     scorer,
     timeout=60,
+    n_trials=None,
     random_state=0,
+    verbose=True,
     early_stopping_rounds=100,
     threshold=1e-5,
+    n_jobs=1,
+    **kwargs,
 ):
 
     # seed sampler for reproducibility
@@ -99,17 +103,31 @@ def tune_optuna(
         direction="maximize" if scorer.greater_is_better else "minimize",
         sampler=sampler,
     )
-    study.optimize(
-        lambda trial: objective(trial, X, y, scorer),
-        timeout=timeout,
-        n_jobs=1,
-        callbacks=[
-            LogWhenImprovedCallback(),
+
+    callbacks = []
+    if verbose:
+        callbacks.append(LogWhenImprovedCallback())
+    if early_stopping_rounds is not None:
+        callbacks.append(
             EarlyStoppingCallback(
                 early_stopping_rounds=early_stopping_rounds,
                 direction=direction,
                 threshold=threshold,
-            ),
-        ],
-    )
+            )
+        )
+
+    if n_trials is not None:
+        study.optimize(
+            lambda trial: objective(trial, X, y, scorer, **kwargs),
+            n_trials=n_trials,
+            n_jobs=n_jobs,
+            callbacks=callbacks,
+        )
+    else:
+        study.optimize(
+            lambda trial: objective(trial, X, y, scorer, **kwargs),
+            timeout=timeout,
+            n_jobs=n_jobs,
+            callbacks=callbacks,
+        )
     return study

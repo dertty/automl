@@ -8,10 +8,11 @@ from typing_extensions import Self
 from ..constants import PATH, create_ml_data_dir
 from ..loggers import get_logger
 from ..metrics import get_scorer
+from .blender import CoordDescBlender, OptunaBlender
 from .catboost import CatBoostClassification, CatBoostRegression
 from .lama import TabularLama, TabularLamaNN, TabularLamaUtilized
 from .lightgbm import LightGBMClassification, LightGBMRegression
-from .linear import RidgeRegression
+from .linear import LogisticRegression, RidgeRegression
 from .sklearn_forests import (
     ExtraTreesClassification,
     ExtraTreesRegression,
@@ -32,6 +33,7 @@ class AutoML:
         metric,
         time_series=False,
         models_list=None,
+        blend=False,
         n_jobs: int = 6,
         random_state: int = 42,
         tuning_timeout=60,
@@ -146,11 +148,11 @@ class AutoML:
                 ]
             elif self.task == "classification":
                 self.models_list = [
-                    # LogisticRegression(
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
+                    LogisticRegression(
+                        n_jobs=self.n_jobs,
+                        random_state=self.random_state,
+                        time_series=self.time_series,
+                    ),
                     RandomForestClassification(
                         n_jobs=self.n_jobs,
                         random_state=self.random_state,
@@ -176,72 +178,78 @@ class AutoML:
                         random_state=self.random_state,
                         time_series=self.time_series,
                     ),
-                    TabularLama(
-                        task="classification",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaUtilized(
-                        task="classification",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="classification",
-                        nn_name="mlp",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="classification",
-                        nn_name="denselight",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="classification",
-                        nn_name="dense",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="classification",
-                        nn_name="resnet",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="classification",
-                        nn_name="node",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="classification",
-                        nn_name="autoint",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="classification",
-                        nn_name="fttransformer",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
+                    # TabularLama(
+                    #     task="classification",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaUtilized(
+                    #     task="classification",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaNN(
+                    #     task="classification",
+                    #     nn_name="mlp",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaNN(
+                    #     task="classification",
+                    #     nn_name="denselight",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaNN(
+                    #     task="classification",
+                    #     nn_name="dense",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaNN(
+                    #     task="classification",
+                    #     nn_name="resnet",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaNN(
+                    #     task="classification",
+                    #     nn_name="node",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaNN(
+                    #     task="classification",
+                    #     nn_name="autoint",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLamaNN(
+                    #     task="classification",
+                    #     nn_name="fttransformer",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
                 ]
             else:
                 raise AttributeError(
                     f"Task type '{self.task}' is not supported. Available tasks: 'regression', 'classification'."
                 )
+
+        self.blend = blend
+        self.flag_blend_is_best = False
+        if self.blend:
+            self.blender = CoordDescBlender(n_jobs=n_jobs)
+            self.models_list.append(self.blender)
 
         self.path = PATH
         self.best_score = None
@@ -262,11 +270,34 @@ class AutoML:
         self.feature_names = X.columns
         y = convert_to_numpy(y)
 
+        if self.blend:
+            assert self.task == "classification"
+            oofs = np.full(
+                (len(self.models_list) - 1, X.shape[0], len(np.unique(y))),
+                fill_value=np.nan,
+                dtype=np.float32,
+            )
+
+            if Xs_test is not None:
+                tests = np.full(
+                    (len(self.models_list) - 1, Xs_test.shape[0], len(np.unique(y))),
+                    fill_value=np.nan,
+                    dtype=np.float32,
+                )
+
         for i, model in enumerate(self.models_list):
             log.info(
                 f"{i + 1} out of {len(self.models_list)}. {model.name}",
                 msg_type="model",
             )
+
+            if self.blend and i == len(self.models_list) - 1:
+                # working with blender
+                # change X-s
+                X = np.hstack(oofs[:, :, [1]])
+
+                if Xs_test is not None:
+                    Xs_test = np.hstack(tests[:, :, [1]])
 
             log.info(f"Working with {model.name}", msg_type="start")
 
@@ -357,12 +388,33 @@ class AutoML:
                     msg_type="best",
                 )
 
+            if self.blend and i != len(self.models_list) - 1:
+                # save oof for blending
+                oofs[i] = oof_preds
+
+                if Xs_test is not None:
+                    tests[i] = ys_pred
+
+        if self.best_model.name == "Blender":
+            self.flag_blend_is_best = True
         return self
 
     def predict(self, X: FeaturesType, model_name=None):
 
-        # inference the model
-        y_pred = self.best_model.predict(X)
+        if self.flag_blend_is_best:
+            y_pred = np.zeros((X.shape[0], len(self.blender.weights)))
+
+            # inference models with non-zero blend weights
+            non_zero_idx = self.blender.non_zero_idx
+            for idx in non_zero_idx:
+                y_pred[:, idx] = self.models_list[idx].predict(X)[:, 1]
+
+            # inference blender
+            y_pred = self.blender.predict(y_pred)
+
+        else:
+            # inference the best model
+            y_pred = self.best_model.predict(X)
 
         return y_pred
 
