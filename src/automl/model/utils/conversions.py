@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import numpy as np
 import pandas as pd
 
@@ -8,6 +10,9 @@ def convert_to_numpy(data):
 
     if isinstance(data, np.ndarray):
         return data
+
+    if isinstance(data, list):
+        return np.array(data, dtype=np.float32)
 
     raise AttributeError(
         "Input data is of incorrect type. Supported types: 'pandas' ,'numpy'"

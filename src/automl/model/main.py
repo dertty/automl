@@ -20,7 +20,7 @@ from .sklearn_forests import (
     RandomForestRegression,
 )
 from .type_hints import FeaturesType, TargetType
-from .utils import convert_to_numpy, save_yaml
+from .utils import convert_to_numpy, convert_to_pandas, save_yaml
 from .xgboost import XGBClassification, XGBRegression
 
 log = get_logger(__name__)
@@ -34,6 +34,7 @@ class AutoML:
         time_series=False,
         models_list=None,
         blend=False,
+        stack=False,
         n_jobs: int = 6,
         random_state: int = 42,
         tuning_timeout=60,
@@ -41,6 +42,8 @@ class AutoML:
         self.task = task
         self.metric = metric
         self.scorer = get_scorer(metric)
+        self.blend = blend
+        self.stack = stack
         self.time_series = time_series
         self.n_jobs = n_jobs
         self.random_state = random_state
@@ -178,12 +181,12 @@ class AutoML:
                         random_state=self.random_state,
                         time_series=self.time_series,
                     ),
-                    # TabularLama(
-                    #     task="classification",
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
+                    TabularLama(
+                        task="classification",
+                        n_jobs=self.n_jobs,
+                        random_state=self.random_state,
+                        time_series=self.time_series,
+                    ),
                     # TabularLamaUtilized(
                     #     task="classification",
                     #     n_jobs=self.n_jobs,
@@ -245,10 +248,26 @@ class AutoML:
                     f"Task type '{self.task}' is not supported. Available tasks: 'regression', 'classification'."
                 )
 
-        self.blend = blend
+        self.flag_stack_is_best = False
+        if self.stack:
+            if self.task == "classification":
+                self.stacker = LightGBMClassification(
+                    n_jobs=self.n_jobs,
+                    random_state=self.random_state,
+                    time_series=self.time_series,
+                )
+            else:
+                self.stacker = LightGBMRegression(
+                    n_jobs=self.n_jobs,
+                    random_state=self.random_state,
+                    time_series=self.time_series,
+                )
+            self.stacker.name = "Stacker"
+            self.models_list.append(self.stacker)
+
         self.flag_blend_is_best = False
         if self.blend:
-            self.blender = CoordDescBlender(n_jobs=n_jobs)
+            self.blender = CoordDescBlender()
             self.models_list.append(self.blender)
 
         self.path = PATH
@@ -270,20 +289,9 @@ class AutoML:
         self.feature_names = X.columns
         y = convert_to_numpy(y)
 
-        if self.blend:
-            assert self.task == "classification"
-            oofs = np.full(
-                (len(self.models_list) - 1, X.shape[0], len(np.unique(y))),
-                fill_value=np.nan,
-                dtype=np.float32,
-            )
-
-            if Xs_test is not None:
-                tests = np.full(
-                    (len(self.models_list) - 1, Xs_test.shape[0], len(np.unique(y))),
-                    fill_value=np.nan,
-                    dtype=np.float32,
-                )
+        # for blending and stacking
+        oofs = []
+        test_preds = []
 
         for i, model in enumerate(self.models_list):
             log.info(
@@ -291,31 +299,73 @@ class AutoML:
                 msg_type="model",
             )
 
-            if self.blend and i == len(self.models_list) - 1:
+            x_train_iter = X
+            x_test_iter = Xs_test
+
+            if model.name == "Blender":
                 # working with blender
-                # change X-s
-                X = np.hstack(oofs[:, :, [1]])
+                # prediction of previous models are now features
+                x_train_iter = oofs
 
                 if Xs_test is not None:
-                    Xs_test = np.hstack(tests[:, :, [1]])
+                    x_test_iter = test_preds
+
+            if model.name == "Stacker":
+                # working with stacking
+                # initial features + predictions of previous models are now features
+                temp = convert_to_numpy(oofs)
+                if temp.shape[-1] == 1:
+                    # regression
+                    x_train_iter = pd.concat(
+                        [X, convert_to_pandas(temp[:, :, 0].T)], axis=1
+                    )
+                elif temp.shape[-1] == 2:
+                    # binary classification
+                    x_train_iter = pd.concat(
+                        [X, convert_to_pandas(temp[:, :, 1].T)], axis=1
+                    )
+                else:
+                    # multiclass classification
+                    x_train_iter = pd.concat(
+                        [X, convert_to_pandas(np.hstack(temp))], axis=1
+                    )
+
+                if Xs_test is not None:
+                    temp = convert_to_numpy(test_preds)
+                    if temp.shape[-1] == 1:
+                        # regression
+                        x_test_iter = pd.concat(
+                            [Xs_test, convert_to_pandas(temp[:, :, 0].T)], axis=1
+                        )
+                    elif temp.shape[-1] == 2:
+                        # binary classification
+                        x_test_iter = pd.concat(
+                            [Xs_test, convert_to_pandas(temp[:, :, 1].T)], axis=1
+                        )
+                    else:
+                        # multiclass classification
+                        x_test_iter = pd.concat(
+                            [Xs_test, convert_to_pandas(np.hstack(temp))], axis=1
+                        )
 
             log.info(f"Working with {model.name}", msg_type="start")
 
             # tune the model
             model.tune(
-                X,
+                x_train_iter,
                 y,
                 scorer=self.scorer,
                 timeout=self.tuning_timeout,
                 categorical_features=categorical_features,
             )
-
             # fit the tuned model and predict on train
-            oof_preds = model.fit(X, y, categorical_features=categorical_features)
-            ys_trian = model.predict(X)
+            oof_preds = model.fit(
+                x_train_iter, y, categorical_features=categorical_features
+            )
+            y_trian_preds = model.predict(x_train_iter)
 
             # evaluate on train
-            train_scores = self.evaluate(y, ys_trian)
+            train_scores = self.evaluate(y, y_trian_preds)
             log.info(f"Train: {train_scores}", msg_type="score")
 
             # evaluate on out_of_fold
@@ -330,10 +380,10 @@ class AutoML:
             oof_scores = self.evaluate(y[not_none_oof], oof_preds[not_none_oof])
             log.info(f"OOF: {oof_scores}", msg_type="score")
 
-            if Xs_test is not None and ys_test is not None:
+            if x_test_iter is not None and ys_test is not None:
                 # predict on test and evaluate the model
-                ys_pred = model.predict(Xs_test)
-                test_scores = self.evaluate(ys_test, ys_pred)
+                y_test_preds = model.predict(x_test_iter)
+                test_scores = self.evaluate(ys_test, y_test_preds)
                 log.info(f"Test: {test_scores}", msg_type="score")
                 log.info(
                     f"Overfit: {(abs(test_scores - train_scores) / train_scores) * 100 :.2f} %",
@@ -364,8 +414,10 @@ class AutoML:
             if save_test and Xs_test is not None and ys_test is not None:
                 # save test predictions
                 pd.DataFrame(
-                    ys_pred,
-                    columns=[f"{model.name}_pred_{i}" for i in range(ys_pred.shape[1])],
+                    y_test_preds,
+                    columns=[
+                        f"{model.name}_pred_{i}" for i in range(y_test_preds.shape[1])
+                    ],
                 ).to_csv(model_dir / f"test_preds.csv", index=False)
 
             # save best model's parameters
@@ -388,29 +440,55 @@ class AutoML:
                     msg_type="best",
                 )
 
-            if self.blend and i != len(self.models_list) - 1:
+            if (self.blend or self.stack) and model.name != "Blender":
                 # save oof for blending
-                oofs[i] = oof_preds
+                oofs.append(oof_preds)
 
                 if Xs_test is not None:
-                    tests[i] = ys_pred
+                    test_preds.append(y_test_preds)
 
         if self.best_model.name == "Blender":
             self.flag_blend_is_best = True
+
+        if self.best_model.name == "Stacker":
+            self.flag_stack_is_best = True
+
         return self
 
     def predict(self, X: FeaturesType, model_name=None):
 
         if self.flag_blend_is_best:
-            y_pred = np.zeros((X.shape[0], len(self.blender.weights)))
+            y_pred = []
 
-            # inference models with non-zero blend weights
-            non_zero_idx = self.blender.non_zero_idx
+            # inference models with non-zero blender weights
+            non_zero_idx = np.where(self.blender.weights > 0)[0]
             for idx in non_zero_idx:
-                y_pred[:, idx] = self.models_list[idx].predict(X)[:, 1]
+                y_pred.append(self.models_list[idx].predict(X))
 
             # inference blender
             y_pred = self.blender.predict(y_pred)
+
+        elif self.flag_stack_is_best:
+            y_pred = []
+
+            # inference all the models
+            for idx in range(len(self.models_list)):
+                if not self.models_list[idx].name in ["Stacker", "Blender"]:
+                    y_pred.append(self.models_list[idx].predict(X))
+
+            y_pred = convert_to_numpy(y_pred)
+            if y_pred.shape[-1] == 1:
+                # regression
+                X = pd.concat([X, convert_to_pandas(y_pred[:, :, 0].T)], axis=1)
+            elif y_pred.shape[-1] == 2:
+                # binary classification
+                X = pd.concat([X, convert_to_pandas(y_pred[:, :, 1].T)], axis=1)
+            else:
+                # multiclass classification
+                X = pd.concat([X, convert_to_pandas(np.hstack(y_pred))], axis=1)
+
+            # inference blender
+            y_pred = self.stacker.predict(X)
 
         else:
             # inference the best model

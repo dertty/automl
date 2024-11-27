@@ -1,3 +1,5 @@
+import enum
+
 from .type_hints import FeaturesType, TargetType
 
 
@@ -44,7 +46,7 @@ class BaseModel:
         # if isinstance(Xs, FeaturesType):
         # TypeError: Subscripted generics cannot be used with class and instance checks in < python3.10
 
-        if not isinstance(Xs, list):
+        if not isinstance(Xs, list) or self.name == "Blender":
             # only one test
             return self._predict(Xs)
 
@@ -55,3 +57,10 @@ class BaseModel:
             ys_pred.append(y_pred)
 
         return ys_pred
+
+
+@enum.unique
+class ModelType(enum.Enum):
+    BASE_MODEL = 0
+    BLENDER = 1
+    STACKER = 2

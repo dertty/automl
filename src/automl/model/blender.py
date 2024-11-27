@@ -86,15 +86,21 @@ class OptunaBlender(BaseModel):
 
         return np.mean(cv_metrics)
 
+    @staticmethod
+    def _compute_weighted_pred(x, weights):
+        return np.sum(x * weights.reshape(-1, 1, 1), axis=0)
+
     def tune(self, X, y, scorer, timeout=60, categorical_features=[]):
         log.info(f"Tuning {self.name}", msg_type="start")
 
         X = convert_to_numpy(X)
+        assert X.ndim == 3
+
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
         timeout = min(timeout, 1)
-        self.n = X.shape[1]
+        self.n = X.shape[-1]
         self.non_zero_idx = np.arange(self.n, dtype=int)
         self.weights = np.array([1 / self.n for _ in range(self.n)])
 
@@ -193,17 +199,22 @@ class CoordDescBlender(BaseModel):
         self,
         n=None,
         weights=None,
-        n_jobs=1,
+        n_iters=10,
+        n_inner_iters=3,
         random_state=42,
-        drop_thresh=1e-2,
+        drop_thresh=1e-1,
         time_series=False,
     ):
+        """Blender inspired by LightAutoML.
+        https://github.com/sb-ai-lab/LightAutoML/blob/master/lightautoml/automl/blend.py
+        """
         self.name = "Blender"
 
         self.n = n
         self.weights = weights
 
-        # self.n_jobs = n_jobs
+        self.n_iters = n_iters
+        self.n_inner_iters = n_inner_iters
         self.random_state = random_state
 
         self.drop_thresh = drop_thresh
@@ -236,25 +247,36 @@ class CoordDescBlender(BaseModel):
         weights = deepcopy(weights)
         weights[idx] = weight
         weights = self.adjust_weights(weights, idx, self.drop_thresh)
-        metric = scorer.score(y, X @ weights)
-        return metric
+        y_pred = self._compute_weighted_pred(X, weights)
+
+        if y_pred.ndim == 2 and y_pred.shape[1] == 2:
+            # binary case
+            y_pred = y_pred[:, 1]
+        metric = scorer.score(y, y_pred)
+        return -1 * metric if scorer.greater_is_better else metric
+
+    @staticmethod
+    def _compute_weighted_pred(x, weights):
+        return np.sum(x * weights.reshape(-1, 1, 1), axis=0)
 
     def tune(self, X, y, scorer, timeout=60, categorical_features=[]):
         log.info(f"Tuning {self.name}", msg_type="start")
 
         X = convert_to_numpy(X)
+        assert X.ndim == 3
+
         y = convert_to_numpy(y)
         y = y.reshape(y.shape[0])
 
-        n_trials = 10
-        self.n = X.shape[1]
+        timeout = min(timeout, 1)
+        self.n = X.shape[0]
         self.non_zero_idx = np.arange(self.n, dtype=int)
         self.weights = np.array([1 / self.n for _ in range(self.n)])
 
         best_score = None
         best_weights = deepcopy(self.weights)
 
-        for i in range(5):
+        for i in range(self.n_iters):
             flg_no_upd = True
             for idx in range(self.n):
 
@@ -269,7 +291,7 @@ class CoordDescBlender(BaseModel):
                     method="Bounded",
                     bounds=(0, 1),
                     args=(weights, X, y, scorer, idx),
-                    options={"disp": False, "maxiter": 3},
+                    options={"disp": False, "maxiter": self.n_inner_iters},
                 )
 
                 weights[idx] = opt_res.x
@@ -286,7 +308,7 @@ class CoordDescBlender(BaseModel):
                     best_weights = deepcopy(weights)
                     flg_no_upd = False
 
-                self.weights = deepcopy(weights)
+                self.weights = weights
 
             # log.info(f"{len(study.trials)} trials completed", msg_type="optuna")
             log.info(
@@ -303,13 +325,29 @@ class CoordDescBlender(BaseModel):
 
     def _predict(self, X_test):
         X_test = convert_to_numpy(X_test)
-        y = X_test @ self.weights
-        y = y.reshape(-1, 1)
-        return np.hstack((1 - y, y))
+        if X_test.shape[0] != self.n:
+            non_zero_idx = np.where(self.weights > 0)[0]
+
+            if X_test.shape[0] == len(non_zero_idx):
+                # only the features with non-zero weight are given
+                y = self._compute_weighted_pred(X_test, self.weights[non_zero_idx])
+            else:
+                raise ValueError(
+                    f"X contains {X_test.shape[0]} features but should contain {self.n} features."
+                )
+
+        else:
+            y = self._compute_weighted_pred(X_test, self.weights)
+        return y
 
     @property
     def not_tuned_params(self):
-        return {"n": self.n, "random_state": self.random_state}
+        return {
+            "n": self.n,
+            "random_state": self.random_state,
+            "n_iters": self.n_iters,
+            "n_inner_iters": self.n_inner_iters,
+        }
 
     @property
     def inner_params(self):
