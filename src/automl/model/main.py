@@ -51,9 +51,6 @@ class AutoML:
 
         self.models_list = models_list
 
-        # create directory for storing artefacts
-        create_ml_data_dir()
-
         self.models_list = models_list
         if self.models_list is None:
             # fill the model_list with models
@@ -286,6 +283,10 @@ class AutoML:
     ) -> Self:
         """If self.time_series == True -> X should be sorted by time."""
 
+        # create experiment directory in ml_data for saving data
+        if save_models or save_oof or save_test:
+            create_ml_data_dir()
+
         self.feature_names = X.columns
         y = convert_to_numpy(y)
 
@@ -293,6 +294,7 @@ class AutoML:
         oofs = []
         test_preds = []
 
+        # sequentially process every model
         for i, model in enumerate(self.models_list):
             log.info(
                 f"{i + 1} out of {len(self.models_list)}. {model.name}",
@@ -317,17 +319,20 @@ class AutoML:
                 if temp.shape[-1] == 1:
                     # regression
                     x_train_iter = pd.concat(
-                        [X, convert_to_pandas(temp[:, :, 0].T)], axis=1
+                        [X.reset_index(drop=True), convert_to_pandas(temp[:, :, 0].T)],
+                        axis=1,
                     )
                 elif temp.shape[-1] == 2:
                     # binary classification
                     x_train_iter = pd.concat(
-                        [X, convert_to_pandas(temp[:, :, 1].T)], axis=1
+                        [X.reset_index(drop=True), convert_to_pandas(temp[:, :, 1].T)],
+                        axis=1,
                     )
                 else:
                     # multiclass classification
                     x_train_iter = pd.concat(
-                        [X, convert_to_pandas(np.hstack(temp))], axis=1
+                        [X.reset_index(drop=True), convert_to_pandas(np.hstack(temp))],
+                        axis=1,
                     )
 
                 if Xs_test is not None:
@@ -335,17 +340,29 @@ class AutoML:
                     if temp.shape[-1] == 1:
                         # regression
                         x_test_iter = pd.concat(
-                            [Xs_test, convert_to_pandas(temp[:, :, 0].T)], axis=1
+                            [
+                                Xs_test.reset_index(drop=True),
+                                convert_to_pandas(temp[:, :, 0].T),
+                            ],
+                            axis=1,
                         )
                     elif temp.shape[-1] == 2:
                         # binary classification
                         x_test_iter = pd.concat(
-                            [Xs_test, convert_to_pandas(temp[:, :, 1].T)], axis=1
+                            [
+                                Xs_test.reset_index(drop=True),
+                                convert_to_pandas(temp[:, :, 1].T),
+                            ],
+                            axis=1,
                         )
                     else:
                         # multiclass classification
                         x_test_iter = pd.concat(
-                            [Xs_test, convert_to_pandas(np.hstack(temp))], axis=1
+                            [
+                                Xs_test.reset_index(drop=True),
+                                convert_to_pandas(np.hstack(temp)),
+                            ],
+                            axis=1,
                         )
 
             log.info(f"Working with {model.name}", msg_type="start")
@@ -479,13 +496,22 @@ class AutoML:
             y_pred = convert_to_numpy(y_pred)
             if y_pred.shape[-1] == 1:
                 # regression
-                X = pd.concat([X, convert_to_pandas(y_pred[:, :, 0].T)], axis=1)
+                X = pd.concat(
+                    [X.reset_index(drop=True), convert_to_pandas(y_pred[:, :, 0].T)],
+                    axis=1,
+                )
             elif y_pred.shape[-1] == 2:
                 # binary classification
-                X = pd.concat([X, convert_to_pandas(y_pred[:, :, 1].T)], axis=1)
+                X = pd.concat(
+                    [X.reset_index(drop=True), convert_to_pandas(y_pred[:, :, 1].T)],
+                    axis=1,
+                )
             else:
                 # multiclass classification
-                X = pd.concat([X, convert_to_pandas(np.hstack(y_pred))], axis=1)
+                X = pd.concat(
+                    [X.reset_index(drop=True), convert_to_pandas(np.hstack(y_pred))],
+                    axis=1,
+                )
 
             # inference blender
             y_pred = self.stacker.predict(X)

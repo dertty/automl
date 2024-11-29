@@ -4,7 +4,7 @@ from datetime import datetime
 
 import optuna
 
-from .constants import PATH, is_ml_data_dir_exists
+from .constants import PATH, is_ml_data_dir_exists, create_ml_data_dir
 
 
 def center_text(text: str, max_len: int = 12):
@@ -102,10 +102,10 @@ def get_logger(name):
     logger.addHandler(get_info_stream_handler())
     logger.addHandler(get_error_stream_handler())
     
-    if is_ml_data_dir_exists():
-        # add file handlers
-        logger.addHandler(get_info_file_handler())
-        logger.addHandler(get_error_file_handler())
+    # if is_ml_data_dir_exists():
+    #     # add file handlers
+    #     logger.addHandler(get_info_file_handler())
+    #     logger.addHandler(get_error_file_handler())
 
     logger = LoggerAdapterWithMessageTypes(logger, {"msg_type": None})
 
@@ -115,8 +115,13 @@ def get_logger(name):
     return logger
 
 
-# def configure_root_logger():
-#     # for LightAutoML logs
-#     root_logger = logging.getLogger()
-#     root_logger.addHandler(get_info_file_handler())
-#     root_logger.addHandler(get_error_file_handler())
+def enable_logging_to_dir():
+    """Configure root logger to save logs in ml_data dir."""
+    root_logger = logging.getLogger()
+    
+    # add handlers only if root logger
+    # does not yet have any handlers
+    if len(root_logger.handlers) == 0:
+        create_ml_data_dir()
+        root_logger.addHandler(get_info_file_handler())
+        root_logger.addHandler(get_error_file_handler())
