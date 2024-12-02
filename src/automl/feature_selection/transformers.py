@@ -124,7 +124,7 @@ class CorrFeaturesTransformer(BaseEstimator, TransformerMixin):
  
 class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, task_type, target_colname, metric_name, metric_direction, timeout=120, random_state=42,
-                 model='lama', strategy='RFA', permutation_n_repeats = 5):
+                 model='lama', strategy='RFA', permutation_n_repeats = 5, permutation_importance_threshold=None):
         self.task_type = task_type
         self.target_colname = target_colname
         self.metric_name = metric_name
@@ -133,8 +133,11 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
         self.random_state = random_state
         self.model = model
         self.strategy = strategy
+        self.best_metric = None
+        self.strategy_result_dict = {}
         self.selected_features = []
         self.permutation_n_repeats = permutation_n_repeats
+        self.permutation_importance_threshold = permutation_importance_threshold
  
         assert self.metric_direction in ('maximize', 'minimize'), "Incorrect metric direction.Choose 'maximize' or 'minimize' direction"
 
@@ -143,8 +146,8 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
             metric_test = mean_absolute_error(y_true=test_with_prediction[self.target_colname], y_pred=test_with_prediction[f'{self.target_colname}_prediction_{self.model}'])
             metric_train = mean_absolute_error(y_true=train_with_prediction[self.target_colname], y_pred=train_with_prediction[f'{self.target_colname}_prediction_{self.model}'])
         if self.metric_name == 'regression_roc_auc_score':
-            metric_test = np.round(regression_roc_auc_score(y_true=test_with_prediction[self.target_colname].values, y_pred=test_with_prediction[f'{self.target_colname}_prediction_{self.model}'].values), 4)
-            metric_train = np.round(regression_roc_auc_score(y_true=train_with_prediction[self.target_colname].values, y_pred=train_with_prediction[f'{self.target_colname}_prediction_{self.model}'].values), 4)
+            metric_test = regression_roc_auc_score(y_true=test_with_prediction[self.target_colname].values, y_pred=test_with_prediction[f'{self.target_colname}_prediction_{self.model}'].values)
+            metric_train = regression_roc_auc_score(y_true=train_with_prediction[self.target_colname].values, y_pred=train_with_prediction[f'{self.target_colname}_prediction_{self.model}'].values)
        
         return metric_train, metric_test
  
@@ -246,6 +249,8 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
         feature_selection_dict = {'iter_lst':iter_lst, 'train_metric_lst':train_metric_lst,
                                 'test_metric_lst':test_metric_lst, 'features':best_features_dict,
                                 'metric_diff_train':metric_diff_train, 'metric_diff_test':metric_diff_test}
+        self.best_metric = best_test_metric
+        self.strategy_result_dict = feature_selection_dict
        
         return best_features_iter
  
@@ -321,8 +326,10 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
         log.info(f'Отобрано {len(best_features_iter)} признаков: {best_features_iter}', msg_type="feature_selection")
         log.info(f'Лучшая метрика на тесте: {best_test_metric}', msg_type="feature_selection")
         feature_selection_dict = {'iter_lst':iter_lst, 'train_metric_lst':train_metric_lst,
-                                'test_metric_lst':test_metric_lst, 'features':best_features_dict,
+                                'test_metric_lst':test_metric_lst, 'best_features':best_features_dict, 'drop_features':drop_features_dict,
                                 'metric_diff_train':metric_diff_train, 'metric_diff_test':metric_diff_test}
+        self.best_metric = best_test_metric
+        self.strategy_result_dict = feature_selection_dict
        
         return best_features_iter
 
@@ -331,7 +338,7 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
         if self.metric_name == 'mae':
             return mean_absolute_error(y_true=y, y_pred=preds)
         if self.metric_name == 'regression_roc_auc_score':
-            return np.round(regression_roc_auc_score(y_true=y.values, y_pred=preds), 4)
+            return regression_roc_auc_score(y_true=y.values, y_pred=preds)
 
     def _calculate_permutation_scores(self,
         estimator,
@@ -442,11 +449,13 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
         importance_threshold = importance[importance["importance_mean"] > 0]["importance_mean"].mean() - importance[importance["importance_std"] > 0]["importance_std"].mean()
         best_features_iter = list(importance[importance["importance_mean"] >= importance_threshold].index)
         if best_features_iter == []:
-            importance_threshold = 0
-            best_features_iter = list(importance[importance["importance_mean"] > importance_threshold].index)
+            self.permutation_importance_threshold = 0
+            best_features_iter = list(importance[importance["importance_mean"] > self.permutation_importance_threshold].index)
         estimator = self.train_lama_model(train[best_features_iter + [self.target_colname]])
         best_test_metric = self._weights_scorer(estimator, test[best_features_iter], test[self.target_colname])
         log.info(f'Метрика на всех фичах: {best_test_metric}', msg_type="feature_selection")
+        self.best_metric = best_test_metric
+        self.strategy_result_dict = importance
  
         return best_features_iter
 
