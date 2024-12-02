@@ -17,9 +17,10 @@ class PreprocessingPipeline(Pipeline):
                  outlier_capping_method='gaussian', outlier_cap_tail='both',
                  corr_ts = 0.8, corr_coef_methods=['pearson', 'spearman'],
                  corr_selection_method="missing_values", oe_min_freq=0.1,
-                 obj_encoders = ['oe', 'ohe', 'mte'], verbose=True):
+                 obj_encoders = ['oe', 'ohe', 'mte'], verbose=True, random_state=42):
 
         self.pipe_steps = pipe_steps
+        self.random_state = random_state
         self.nan_share_ts = nan_share_ts
         self.qconst_feature_val_share_ts = qconst_feature_val_share_ts
         self.impute_num_strategy = impute_num_strategy
@@ -70,11 +71,17 @@ class PreprocessingPipeline(Pipeline):
         ).set_output(transform='pandas')      # Трансформер будет возвращать pandas
 
         # Трансформер для кодирования категориальных признаков
-        obj_encoders_dict = {
-            'ohe':('OneHotEncoder', OneHotEncoder(sparse_output=False, drop='first', handle_unknown='ignore', dtype=np.int16), ObjectColumnsSelector(mode='ohe')),
-            'oe':('OrdinalEncoder', OrdinalEncoder(handle_unknown='use_encoded_value', encoded_missing_value=-1, unknown_value=-1, min_frequency=self.oe_min_freq, dtype=np.int16), ObjectColumnsSelector(mode='oe')),
-            'mte':('MeanTargetEncoder', TargetEncoder(target_type='auto'), ObjectColumnsSelector(mode='mte'))
-            }
+        if 'ohe' in self.obj_encoders:
+            obj_encoders_dict = {
+                'ohe':('OneHotEncoder', OneHotEncoder(sparse_output=False, drop='first', handle_unknown='ignore', dtype=np.int16), ObjectColumnsSelector(mode='ohe')),
+                'oe':('OrdinalEncoder', OrdinalEncoder(handle_unknown='use_encoded_value', encoded_missing_value=-1, unknown_value=-1, min_frequency=self.oe_min_freq, dtype=np.int16), ObjectColumnsSelector(mode='oe')),
+                'mte':('MeanTargetEncoder', TargetEncoder(target_type='auto', random_state=self.random_state), ObjectColumnsSelector(mode='mte'))
+                }
+        else:
+            obj_encoders_dict = {
+                'oe':('OrdinalEncoder', OrdinalEncoder(handle_unknown='use_encoded_value', encoded_missing_value=-1, unknown_value=-1, min_frequency=self.oe_min_freq, dtype=np.int16), ObjectColumnsSelector(mode='oe')),
+                'mte':('MeanTargetEncoder', TargetEncoder(target_type='auto', random_state=self.random_state), ObjectColumnsSelector(mode='mte'))
+                }
         if self.pipe_steps[0] == 'all' or 'object_encoder' in self.pipe_steps:
             obj_transformers = [obj_encoders_dict[obj_encoder] for obj_encoder in self.obj_encoders]
         object_encoder = ColumnTransformer(
@@ -86,8 +93,7 @@ class PreprocessingPipeline(Pipeline):
             "nan_cols_dropper":("nan_cols_dropper", nan_col_selector),
             "outlier_capper":("outlier_capper", outlier_capper),
             "nan_imputer":("nan_imputer", nan_imputer),
-            "corr_cols_dropper":("corr_cols_dropper", CorrFeaturesTransformer(corr_ts=self.corr_ts, corr_coef_methods=self.corr_coef_methods,
-                                                          corr_selection_method=self.corr_selection_method)),
+            "corr_cols_dropper":("corr_cols_dropper", CorrFeaturesTransformer(corr_ts=self.corr_ts, corr_coef_methods=self.corr_coef_methods, corr_selection_method=self.corr_selection_method)),
             "object_encoder":("object_encoder", object_encoder),
             "qconst_dropper":("qconst_dropper", qconst_col_selector)
         }
