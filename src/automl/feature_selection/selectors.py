@@ -3,6 +3,9 @@ import numpy as np
 from typing import TypeVar, Optional, List
 from automl.utils.utils import ArrayType
 from automl.utils.utils import get_array_type, check_array_type
+from ..loggers import get_logger
+
+log = get_logger(__name__)
 
 class NanFeatureSelector:
     '''
@@ -24,6 +27,9 @@ class NanFeatureSelector:
         nan_share = df.isna().mean()
         # Select features where the share of NaNs meets or exceeds the threshold
         nan_features = nan_share[nan_share >= self.nan_share_ts].index.tolist()
+        
+        if len(nan_features) > 0:
+            log.info(f"NaN features to drop: {nan_features}", msg_type="preprocessing")
 
         return nan_features
 
@@ -58,9 +64,12 @@ class QConstantFeatureSelector:
             self.find_share_of_value(df[col], col) 
             for col in df.columns
         ]
+        qconst_cols = [col for col in qconst_cols if col is not None]
         
+        if len(qconst_cols) > 0:
+            log.info(f"QConstant features to drop: {qconst_cols}", msg_type="preprocessing")
         # Filter out None values (columns not deemed quasi-constant)
-        return [col for col in qconst_cols if col is not None]
+        return qconst_cols
 
 class ObjectColumnsSelector:
     '''

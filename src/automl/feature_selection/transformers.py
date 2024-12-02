@@ -1,7 +1,7 @@
 import numbers
 import pandas as pd
 import numpy as np
-from feature_engine.selection import SmartCorrelatedSelection
+from feature_engine.selection import SmartCorrelatedSelection, DropHighPSIFeatures
 from sklearn.ensemble._bagging import _generate_indices
 from sklearn.model_selection._validation import _aggregate_score_dicts
 from sklearn.utils import Bunch, _safe_indexing, check_array, check_random_state
@@ -71,7 +71,8 @@ class AdversarialTestTransformer(BaseEstimator, TransformerMixin):
                 'od_wait': 5,
                 'random_seed': self.random_state,
                 'ignored_features': [],
-                'depth': 4
+                'depth': 4,
+                "verbose": False
             }
         model = CatBoostClassifier(**params)
         model.fit(train_data, eval_set=holdout_data)
@@ -90,11 +91,49 @@ class AdversarialTestTransformer(BaseEstimator, TransformerMixin):
             top_fi_name = cb_feature_importance_df.iloc[0]['feature_names']
         self.adversarial_drop_features = ignore_features
         
+        if len(self.adversarial_drop_features) > 0:
+            log.info(f"Features not passing adversarial test to drop: {self.adversarial_drop_features}", msg_type="preprocessing")
+        
         return self
     
     def transform(self, X):
+        X = X.drop(self.adversarial_drop_features, axis=1)
         
-        X.drop(self.adversarial_drop_features, axis=1, inplace=True)
+        return X
+    
+    
+class DropHighPSITransformer(BaseEstimator, TransformerMixin):
+    def __init__(self, split_col='is_test_for_val', psi_cut_off=0.5, psi_threshold=0.2,
+                 psi_bins=15, psi_strategy='equal_width', psi_missing_values='ignore'):
+        '''PSI test.
+        '''
+        self.split_col = split_col
+        self.psi_cut_off = psi_cut_off
+        self.psi_threshold = psi_threshold
+        self.psi_bins = psi_bins
+        self.psi_strategy = psi_strategy
+        self.psi_missing_values = psi_missing_values
+        self.psi_features_to_drop = []
+        
+        self.transformer = DropHighPSIFeatures(split_col=self.split_col,
+                                               cut_off=self.psi_cut_off,
+                                               threshold=self.psi_threshold,
+                                               bins=self.psi_bins,
+                                               strategy=self.psi_strategy,
+                                               missing_values=self.psi_missing_values)
+
+    def fit(self, X, y=None):
+        
+        self.transformer.fit(X)
+        self.psi_features_to_drop = self.transformer.features_to_drop_
+        
+        if len(self.psi_features_to_drop) > 0:
+            log.info(f"Features not passing psi test to drop: {self.psi_features_to_drop}", msg_type="preprocessing")
+        
+        return self
+    
+    def transform(self, X):
+        X = X.drop(columns = self.psi_features_to_drop, axis=1)
         
         return X
    
@@ -112,11 +151,13 @@ class CorrFeaturesTransformer(BaseEstimator, TransformerMixin):
             scs = SmartCorrelatedSelection(threshold=self.corr_ts, method=corr_coef_method, selection_method=self.corr_selection_method)
             scs.fit(X)
             self.drop_corr_features += scs.features_to_drop_
+            
+        if len(self.drop_corr_features) > 0:
+            log.info(f"Corr features to drop: {self.drop_corr_features}", msg_type="preprocessing")
     
         return self
  
     def transform(self, X):
-
         self.drop_corr_features = list(set(self.drop_corr_features))
         X.drop(self.drop_corr_features, axis=1, inplace=True)
  
