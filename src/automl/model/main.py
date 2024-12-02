@@ -248,11 +248,21 @@ class AutoML:
         self.flag_stack_is_best = False
         if self.stack:
             if self.task == "classification":
-                self.stacker = LightGBMClassification(
+                # self.stacker = LightGBMClassification(
+                #     n_jobs=self.n_jobs,
+                #     random_state=self.random_state,
+                #     time_series=self.time_series,
+                # )
+                self.stacker = CatBoostClassification(
                     n_jobs=self.n_jobs,
                     random_state=self.random_state,
                     time_series=self.time_series,
                 )
+                # self.stacker = RandomForestClassification(
+                #         n_jobs=self.n_jobs,
+                #         random_state=self.random_state,
+                #         time_series=self.time_series,
+                #     )
             else:
                 self.stacker = LightGBMRegression(
                     n_jobs=self.n_jobs,
@@ -461,7 +471,9 @@ class AutoML:
                     msg_type="best",
                 )
 
-            if (self.blend or self.stack) and model.name != "Blender":
+            if (self.blend or self.stack) and (
+                model.name not in ["Blender", "Stacker"]
+            ):
                 # save oof for blending
                 oofs.append(oof_preds)
 

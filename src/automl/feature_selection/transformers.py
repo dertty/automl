@@ -14,6 +14,14 @@ from lightautoml.tasks import Task
 from multiprocessing import cpu_count
 from automl.feature_selection.CustomMetrics import regression_roc_auc_score
 from automl.loggers import get_logger
+
+
+from sklearn.model_selection import train_test_split
+
+from catboost import CatBoostClassifier
+from catboost import EFeaturesSelectionAlgorithm, EShapCalcType
+from catboost import Pool
+
 log = get_logger(__name__)
 
 class AdversarialTestTransformer(BaseEstimator, TransformerMixin):
@@ -92,7 +100,7 @@ class AdversarialTestTransformer(BaseEstimator, TransformerMixin):
         self.adversarial_drop_features = ignore_features
         
         if len(self.adversarial_drop_features) > 0:
-            log.info(f"Features not passing adversarial test to drop: {self.adversarial_drop_features}", msg_type="preprocessing")
+            log.info(f"Features not passing adversarial test to drop: {self.adversarial_drop_features}", msg_type="val_tests")
         
         return self
     
@@ -128,7 +136,7 @@ class DropHighPSITransformer(BaseEstimator, TransformerMixin):
         self.psi_features_to_drop = self.transformer.features_to_drop_
         
         if len(self.psi_features_to_drop) > 0:
-            log.info(f"Features not passing psi test to drop: {self.psi_features_to_drop}", msg_type="preprocessing")
+            log.info(f"Features not passing psi test to drop: {self.psi_features_to_drop}", msg_type="val_tests")
         
         return self
     
@@ -511,3 +519,57 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
         X = X[self.selected_features + [self.target_colname]]
        
         return X
+    
+    
+class CatboostShapFeatureSelector(BaseEstimator, TransformerMixin):
+    def __init__(
+        self,
+        n_features_to_select=50,
+        complexity="Regular",
+        steps=10,
+        random_state=42,
+        n_jobs=1):
+        """Perform feature selection by recurcive catboost shap.
+
+        Args:
+            n_features_to_select (int, optional). Defaults to 50.
+            complexity (str, optional): One of ["Approximate", "Regular", "Exact"]. Defaults to "Regular".
+            steps (int, optional). Defaults to 10.
+            random_state (int, optional). Defaults to 42.
+            n_jobs (int, optional). Defaults to 1.
+        """
+        
+        self.n_features_to_select = n_features_to_select
+        self.complexity = EShapCalcType[complexity]
+        self.steps = steps
+        self.random_state = random_state
+        self.n_jobs = n_jobs
+        
+    def fit(self, X, y, categorical_features=[]):
+        X_train, X_val, y_train, y_val = train_test_split(X.copy(), y.copy(), stratify=y, test_size=0.3, random_state=self.random_state)
+        
+        train_pool = Pool(X_train, y_train, cat_features=categorical_features)
+        val_pool = Pool(X_val, y_val, cat_features=categorical_features)
+        
+        model = CatBoostClassifier(random_state=self.random_state, verbose=0, early_stopping_rounds=200, iterations=2500,
+                                   thread_count=self.n_jobs, allow_writing_files=False)
+        
+        summary = model.select_features(train_pool, eval_set=val_pool,
+                                features_for_select=X_train.columns.tolist(),
+                                num_features_to_select=self.n_features_to_select,
+                                #verbose=False,
+                                logging_level="Silent",
+                                algorithm=EFeaturesSelectionAlgorithm.RecursiveByShapValues,
+                                shap_calc_type=self.complexity, steps=self.steps)
+        
+        self.selected_features = summary["selected_features_names"]
+        
+        log.info(f'Selected features: {self.selected_features}', msg_type="feature_selection")
+        
+        return self
+    
+    def transform(self, X, y=None, **kwargs):
+        
+        X = X.copy().loc[:, self.selected_features]
+        return X
+        

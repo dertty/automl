@@ -342,7 +342,6 @@ class XGBClassification(BaseModel):
                 sample_weight = compute_sample_weight(
                     class_weight="balanced", y=y[train_idx]
                 )
-
             fold_model = XGBClass(**inner_params, eval_metric=self.eval_metric)
 
             # fit/predict fold model

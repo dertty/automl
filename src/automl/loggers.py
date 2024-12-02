@@ -28,7 +28,8 @@ msg_types_reprs = {
     "model": center_text("MODEL"),
     "params": center_text("PARAMS"),
     "preprocessing": center_text("PREPROC"),
-    "val_tests": center_text("VAL_TESTS")
+    "val_tests": center_text("VAL TESTS"),
+    "feature_selection": center_text("FEAT SEL")
 }
 
 # disable default optuna logs
