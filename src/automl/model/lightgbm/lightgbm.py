@@ -145,7 +145,7 @@ class LightGBMRegression(BaseModel):
         trial_params = self.get_trial_params(trial)
         not_tuned_params = self.get_not_tuned_params()
 
-        cv_metrics = []
+        oof_preds = np.full(y.shape[0], fill_value=np.nan)
         best_num_iterations = []
         for train_idx, test_idx in cv:
 
@@ -352,6 +352,7 @@ class LightGBMClassification(BaseModel):
             self.models.append(fold_model)
 
         log.info(f"Fitting {self.name}", msg_type="end")
+
         return oof_preds
 
     def get_trial_params(self, trial):
@@ -395,7 +396,7 @@ class LightGBMClassification(BaseModel):
                 "class_weight", ["balanced", None]
             )
 
-        cv_metrics = []
+        oof_preds = np.full((y.shape[0], self.n_classes), fill_value=np.nan)
         best_num_iterations = []
         for train_idx, test_idx in cv:
             # train_data = lgb.Dataset(
@@ -425,18 +426,21 @@ class LightGBMClassification(BaseModel):
                 categorical_feature=self.categorical_feature,
                 eval_metric=self.eval_metric,
             )
-            y_pred = model.predict_proba(X.iloc[test_idx])
 
-            if y_pred.ndim == 2 and y_pred.shape[1] == 2:
-                y_pred = y_pred[:, 1]
-
-            cv_metrics.append(scorer.score(y[test_idx], y_pred))
+            oof_preds[test_idx] = model.predict_proba(X.iloc[test_idx])
             best_num_iterations.append(model.best_iteration_)
 
         # add `num_iterations` to the optuna parameters
         trial.set_user_attr("num_iterations", round(np.mean(best_num_iterations)))
 
-        return np.mean(cv_metrics)
+        # remove possible Nones in oof
+        not_none_oof = np.where(np.logical_not(np.isnan(oof_preds[:, 0])))[0]
+
+        if oof_preds.ndim == 2 and oof_preds.shape[1] == 2:
+            # binary case
+            oof_preds = oof_preds[:, 1]
+
+        return scorer.score(y[not_none_oof], oof_preds[not_none_oof])
 
     def tune(
         self,

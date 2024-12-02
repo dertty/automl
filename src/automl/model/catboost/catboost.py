@@ -414,7 +414,7 @@ class CatBoostClassification(BaseModel):
         trial_params = self.get_trial_params(trial)
         not_tuned_params = self.not_tuned_params
 
-        cv_metrics = []
+        oof_preds = np.full((y.shape[0], self.n_classes), fill_value=np.nan)
         best_num_iterations = []
         for train_idx, test_idx in cv:
             train_data = Pool(
@@ -429,19 +429,21 @@ class CatBoostClassification(BaseModel):
             )
 
             model.fit(train_data, eval_set=test_data)
-            y_pred = model.predict_proba(test_data)
 
-            if y_pred.ndim == 2 and y_pred.shape[1] == 2:
-                # binary case
-                y_pred = y_pred[:, 1]
-
-            cv_metrics.append(scorer.score(y[test_idx], y_pred))
+            oof_preds[test_idx] = model.predict_proba(test_data)
             best_num_iterations.append(model.best_iteration_)
 
         # add `iterations` as an optuna parameter
         trial.set_user_attr("iterations", round(np.mean(best_num_iterations)))
 
-        return np.mean(cv_metrics)
+        # remove possible Nones in oof
+        not_none_oof = np.where(np.logical_not(np.isnan(oof_preds[:, 0])))[0]
+
+        if oof_preds.ndim == 2 and oof_preds.shape[1] == 2:
+            # binary case
+            oof_preds = oof_preds[:, 1]
+
+        return scorer.score(y[not_none_oof], oof_preds[not_none_oof])
 
     def tune(
         self,
@@ -457,8 +459,9 @@ class CatBoostClassification(BaseModel):
         self.eval_metric = get_eval_metric(scorer)
 
         X = convert_to_pandas(X)
-        y = convert_to_numpy(y)
-        y = y.reshape(y.shape[0])
+        # y = convert_to_numpy(y)
+        # y = y.reshape(y.shape[0])
+        self.n_classes = np.unique(y).shape[0]
 
         study = tune_optuna(
             self.name,
