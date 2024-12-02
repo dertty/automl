@@ -278,13 +278,15 @@ class AutoML:
         ys_test: Union[TargetType, List[TargetType]] = None,
         categorical_features=[],
         save_models=True,
+        save_params=True,
         save_oof=True,
         save_test=True,
     ) -> Self:
         """If self.time_series == True -> X should be sorted by time."""
 
         # create experiment directory in ml_data for saving data
-        if save_models or save_oof or save_test:
+        save_locally_any = save_models or save_oof or save_test or save_params
+        if save_locally_any:
             create_ml_data_dir()
 
         self.feature_names = X.columns
@@ -411,9 +413,10 @@ class AutoML:
                 # Select the best model based on the oof
                 test_scores = oof_scores
 
-            # create model's directory
-            model_dir = self.path / model.name
-            model_dir.mkdir(exist_ok=True)
+            if save_locally_any:
+                # create model's directory
+                model_dir = self.path / model.name
+                model_dir.mkdir(exist_ok=True)
 
             if save_models:
                 # save the model
@@ -437,8 +440,9 @@ class AutoML:
                     ],
                 ).to_csv(model_dir / f"test_preds.csv", index=False)
 
-            # save best model's parameters
-            save_yaml(model.params, model_dir / f"{model.name}.yaml")
+            if save_params:
+                # save best model's parameters
+                save_yaml(model.params, model_dir / f"{model.name}.yaml")
 
             log.info(f"Working with {model.name}", msg_type="end")
 
