@@ -1,8 +1,8 @@
 import pandas as pd
 import numpy as np
 from typing import TypeVar, Optional, List
-from automl.utils.utils import ArrayType
-from automl.utils.utils import get_array_type, check_array_type
+from ..utils.utils import ArrayType
+from ..utils.utils import get_array_type, check_array_type
 from ..loggers import get_logger
 
 log = get_logger(__name__)
@@ -93,14 +93,15 @@ class ObjectColumnsSelector:
         check_array_type(array_type)
 
         # Handle only object (categorical) type columns
-        df_obj = df.select_dtypes(include='object')
-        unique_counts = df_obj.nunique()
+        df_obj = df.select_dtypes(include=["object", "category"])
+        final_cols = df_obj.columns.tolist()
+        # unique_counts = df_obj.nunique()
         
         # Depending on the mode, select columns accordingly
-        if self.mode == 'ohe':
-            final_cols = unique_counts.index[unique_counts <= self.ohe_limiter].tolist()
-        else:
-            final_cols = unique_counts.index[unique_counts > self.ohe_limiter].tolist()
+        # if self.mode == 'ohe':
+        #     final_cols = unique_counts.index[unique_counts <= self.ohe_limiter].tolist()
+        # else:
+        #     final_cols = unique_counts.index[unique_counts > self.ohe_limiter].tolist()
 
         return final_cols
 

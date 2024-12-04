@@ -13,9 +13,9 @@ from sklearn.preprocessing import(
 )
 from feature_engine.outliers import Winsorizer
 from feature_engine.selection import DropHighPSIFeatures
-from automl.feature_selection.selectors import NanFeatureSelector, QConstantFeatureSelector, ObjectColumnsSelector
-from automl.feature_selection.transformers import AdversarialTestTransformer, CorrFeaturesTransformer, DropHighPSITransformer
-from automl.loggers import get_logger, catchstdout
+from .selectors import NanFeatureSelector, QConstantFeatureSelector, ObjectColumnsSelector
+from .transformers import AdversarialTestTransformer, CorrFeaturesTransformer, DropHighPSITransformer, CorrFeaturesTransformerFast
+from ..loggers import get_logger, catchstdout
 log = get_logger(__name__)
 
 class PreprocessingPipeline(Pipeline):
@@ -111,9 +111,9 @@ class PreprocessingPipeline(Pipeline):
         pipe_steps_dict = {
             "nan_cols_dropper":("nan_cols_dropper", nan_col_selector),
             "nan_imputer":("nan_imputer", nan_imputer),
-            "corr_cols_dropper":("corr_cols_dropper", CorrFeaturesTransformer(corr_ts=self.corr_ts, corr_coef_methods=self.corr_coef_methods,
-                                                          corr_selection_method=self.corr_selection_method)),
             "qconst_dropper":("qconst_dropper", qconst_col_selector),
+            "corr_cols_dropper":("corr_cols_dropper", CorrFeaturesTransformerFast(corr_ts=self.corr_ts, corr_coef_methods=self.corr_coef_methods,
+                                                          corr_selection_method=self.corr_selection_method)),
             "outlier_capper":("outlier_capper", outlier_capper),
             "feature_encoder":("feature_encoder", feature_encoder),
         }

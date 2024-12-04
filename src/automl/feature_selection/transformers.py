@@ -12,8 +12,9 @@ from catboost import CatBoostClassifier, Pool
 from lightautoml.automl.presets.tabular_presets import TabularAutoML
 from lightautoml.tasks import Task
 from multiprocessing import cpu_count
-from automl.feature_selection.CustomMetrics import regression_roc_auc_score
-from automl.loggers import get_logger
+#from automl.feature_selection.CustomMetrics import regression_roc_auc_score
+from ..loggers import get_logger
+from .utils import SmartCorrelatedSelectionFast
 
 
 from sklearn.model_selection import train_test_split
@@ -157,6 +158,26 @@ class CorrFeaturesTransformer(BaseEstimator, TransformerMixin):
     
         for corr_coef_method in self.corr_coef_methods:
             scs = SmartCorrelatedSelection(threshold=self.corr_ts, method=corr_coef_method, selection_method=self.corr_selection_method)
+            scs.fit(X)
+            self.drop_corr_features += scs.features_to_drop_
+            
+        if len(self.drop_corr_features) > 0:
+            log.info(f"Corr features to drop: {self.drop_corr_features}", msg_type="preprocessing")
+    
+        return self
+    
+class CorrFeaturesTransformerFast(BaseEstimator, TransformerMixin):
+    def __init__(self, corr_ts=0.8, corr_coef_methods=['pearson', 'spearman'], corr_selection_method="missing_values"):
+    
+        self.corr_coef_methods = corr_coef_methods
+        self.corr_selection_method = corr_selection_method
+        self.corr_ts = corr_ts
+        self.drop_corr_features = []
+    
+    def fit(self, X, y):
+    
+        for corr_coef_method in self.corr_coef_methods:
+            scs = SmartCorrelatedSelectionFast(threshold=self.corr_ts, method=corr_coef_method, selection_method=self.corr_selection_method)
             scs.fit(X)
             self.drop_corr_features += scs.features_to_drop_
             
@@ -557,8 +578,9 @@ class CatboostShapFeatureSelector(BaseEstimator, TransformerMixin):
         summary = model.select_features(train_pool, eval_set=val_pool,
                                 features_for_select=X_train.columns.tolist(),
                                 num_features_to_select=self.n_features_to_select,
-                                #verbose=False,
-                                logging_level="Silent",
+                                verbose=False,
+                                train_final_model=False,
+                                #logging_level="Silent",
                                 algorithm=EFeaturesSelectionAlgorithm.RecursiveByShapValues,
                                 shap_calc_type=self.complexity, steps=self.steps)
         
