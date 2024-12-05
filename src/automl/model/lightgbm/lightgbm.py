@@ -298,6 +298,9 @@ class LightGBMClassification(BaseModel):
             self.kf = StratifiedKFold(
                 n_splits=5, random_state=self.random_state, shuffle=True
             )
+            
+        self.models = None
+        self.oof_preds = None
 
     def fit(self, X: FeaturesType, y: TargetType, categorical_features=[]):
         log.info(f"Fitting {self.name}", msg_type="start")
@@ -398,6 +401,7 @@ class LightGBMClassification(BaseModel):
 
         oof_preds = np.full((y.shape[0], self.n_classes), fill_value=np.nan)
         best_num_iterations = []
+        models = []
         for train_idx, test_idx in cv:
             # train_data = lgb.Dataset(
             #     X[train_idx], y[train_idx], categorical_feature=self.categorical_feature
@@ -429,6 +433,7 @@ class LightGBMClassification(BaseModel):
 
             oof_preds[test_idx] = model.predict_proba(X.iloc[test_idx])
             best_num_iterations.append(model.best_iteration_)
+            models.append(model)
 
         # add `num_iterations` to the optuna parameters
         trial.set_user_attr("num_iterations", round(np.mean(best_num_iterations)))
@@ -438,9 +443,26 @@ class LightGBMClassification(BaseModel):
 
         if oof_preds.ndim == 2 and oof_preds.shape[1] == 2:
             # binary case
-            oof_preds = oof_preds[:, 1]
-
-        return scorer.score(y[not_none_oof], oof_preds[not_none_oof])
+            trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof, 1])
+        else:
+            trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof])
+        
+        if self.models is None:
+            # no trials are completed yet
+            # save tuned models
+            self.models = models
+            self.oof_preds = oof_preds
+            
+        elif (trial_metric <= trial.study.best_value and trial.study.direction == 1) or (
+            trial_metric >= trial.study.best_value and trial.study.direction == 2
+            ):
+            
+            # new best 
+            # save tuned models
+            self.models = models
+            self.oof_preds = oof_preds
+            
+        return trial_metric
 
     def tune(
         self,

@@ -148,21 +148,21 @@ class AutoML:
                 ]
             elif self.task == "classification":
                 self.models_list = [
-                    LogisticRegression(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    RandomForestClassification(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    ExtraTreesClassification(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
+                    # LogisticRegression(
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # RandomForestClassification(
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # ExtraTreesClassification(
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
                     CatBoostClassification(
                         n_jobs=self.n_jobs,
                         random_state=self.random_state,
@@ -248,16 +248,16 @@ class AutoML:
         self.flag_stack_is_best = False
         if self.stack:
             if self.task == "classification":
-                # self.stacker = LightGBMClassification(
-                #     n_jobs=self.n_jobs,
-                #     random_state=self.random_state,
-                #     time_series=self.time_series,
-                # )
-                self.stacker = CatBoostClassification(
+                self.stacker = LightGBMClassification(
                     n_jobs=self.n_jobs,
                     random_state=self.random_state,
                     time_series=self.time_series,
                 )
+                # self.stacker = CatBoostClassification(
+                #     n_jobs=self.n_jobs,
+                #     random_state=self.random_state,
+                #     time_series=self.time_series,
+                # )
                 # self.stacker = RandomForestClassification(
                 #         n_jobs=self.n_jobs,
                 #         random_state=self.random_state,
@@ -379,18 +379,32 @@ class AutoML:
 
             log.info(f"Working with {model.name}", msg_type="start")
 
-            # tune the model
-            model.tune(
-                x_train_iter,
-                y,
-                scorer=self.scorer,
-                timeout=self.tuning_timeout,
-                categorical_features=categorical_features,
-            )
+            if model.name == "TabularLama":
+                    model.tune(
+                        x_train_iter,
+                        y,
+                        scorer=self.scorer,
+                        timeout=5 * 60,
+                        categorical_features=categorical_features
+                        )
+            else:
+                # tune the model
+                model.tune(
+                    x_train_iter,
+                    y,
+                    scorer=self.scorer,
+                    timeout=self.tuning_timeout,
+                    categorical_features=categorical_features,
+                )
+            
             # fit the tuned model and predict on train
-            oof_preds = model.fit(
-                x_train_iter, y, categorical_features=categorical_features
-            )
+            if model.name not in ["CatBoostClassification", "Stacker", "XGBClassification","LightGBMClassification"]:
+                oof_preds = model.fit(
+                    x_train_iter, y, categorical_features=categorical_features
+                )
+            else:
+                oof_preds = model.oof_preds
+                
             y_trian_preds = model.predict(x_train_iter)
 
             # evaluate on train

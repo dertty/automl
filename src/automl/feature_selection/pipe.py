@@ -14,7 +14,7 @@ from sklearn.preprocessing import(
 from feature_engine.outliers import Winsorizer
 from feature_engine.selection import DropHighPSIFeatures
 from .selectors import NanFeatureSelector, QConstantFeatureSelector, ObjectColumnsSelector
-from .transformers import AdversarialTestTransformer, CorrFeaturesTransformer, DropHighPSITransformer, CorrFeaturesTransformerFast
+from .transformers import AdversarialTestTransformer, CorrFeaturesTransformer, DropHighPSITransformer, CorrFeaturesTransformerFast, WinsorizerFast
 from ..loggers import get_logger, catchstdout
 log = get_logger(__name__)
 
@@ -81,7 +81,7 @@ class PreprocessingPipeline(Pipeline):
         # Трансформер для ограничения выбросов
         outlier_capper = ColumnTransformer(
             transformers=[
-                ('outliers_capping', Winsorizer(capping_method=self.outlier_capping_method, tail=self.outlier_cap_tail, missing_values='ignore'), make_column_selector(dtype_include='number')),
+                ('outliers_capping', WinsorizerFast(capping_method=self.outlier_capping_method, tail=self.outlier_cap_tail, missing_values='ignore'), make_column_selector(dtype_include='number')),
             ],
             remainder='passthrough',
             verbose_feature_names_out=False   # Оставляем оригинальные названия колонок

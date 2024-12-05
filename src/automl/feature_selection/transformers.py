@@ -1,7 +1,9 @@
 import numbers
 import pandas as pd
+import polars as pl
 import numpy as np
 from feature_engine.selection import SmartCorrelatedSelection, DropHighPSIFeatures
+from feature_engine.outliers import Winsorizer
 from sklearn.ensemble._bagging import _generate_indices
 from sklearn.model_selection._validation import _aggregate_score_dicts
 from sklearn.utils import Bunch, _safe_indexing, check_array, check_random_state
@@ -24,6 +26,38 @@ from catboost import EFeaturesSelectionAlgorithm, EShapCalcType
 from catboost import Pool
 
 log = get_logger(__name__)
+
+
+class WinsorizerFast(BaseEstimator, TransformerMixin):
+    """
+    Much faster version of Winsorizer.
+    Drastically accelerates `transform` via `polars`.
+    """
+    def __init__(self,
+                 capping_method='gaussian',
+                 tail='both',
+                 missing_values='ignore'):
+        super().__init__()
+        self.capping_method = capping_method
+        self.tail = tail
+        self.missing_values = missing_values
+        self.clipper = Winsorizer(capping_method=self.capping_method,
+                                 tail=self.tail,
+                                 missing_values=self.missing_values)
+        
+    def fit(self, X, y=None):
+        self.clipper.fit(X)
+        return self
+        
+    def transform(self, X, y=None):
+        X = X.copy()
+        input_idx = X.index
+        X = pl.DataFrame(X).with_columns(pl.col(i).clip(lower_bound=self.clipper.left_tail_caps_[i], upper_bound=self.clipper.right_tail_caps_[i]) for i in self.clipper.right_tail_caps_.keys())
+        
+        return X.to_pandas().set_index(input_idx)
+    
+    def set_output(self, *, transform):
+        return self
 
 class AdversarialTestTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, split_col='is_test_for_val', random_state=42, auc_trshld = 0.65):

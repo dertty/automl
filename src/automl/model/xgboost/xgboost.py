@@ -1,6 +1,7 @@
 from copy import deepcopy
 
 import numpy as np
+import torch
 from sklearn.model_selection import KFold, StratifiedKFold, TimeSeriesSplit
 from sklearn.utils import compute_sample_weight
 from xgboost import XGBClassifier as XGBClass
@@ -265,6 +266,7 @@ class XGBClassification(BaseModel):
         class_weight=None,
         time_series=False,
         eval_metric=None,
+        device=None,
     ):
 
         self.name = "XGBClassification"
@@ -294,6 +296,12 @@ class XGBClassification(BaseModel):
         self.early_stopping_rounds = early_stopping_rounds
         self.time_series = time_series
         self.eval_metric = eval_metric
+        self.device = device
+        
+        if self.device is None and torch.cuda.is_available():
+            self.device="cuda"
+        else:
+            self.device="cpu"
 
         if self.time_series:
             self.kf = TimeSeriesSplit(n_splits=5)
@@ -301,6 +309,9 @@ class XGBClassification(BaseModel):
             self.kf = StratifiedKFold(
                 n_splits=5, random_state=self.random_state, shuffle=True
             )
+        
+        self.models = None
+        self.oof_preds = None
 
     def fit(self, X: FeaturesType, y: TargetType, categorical_features=[]):
         log.info(f"Fitting {self.name}", msg_type="start")
@@ -397,6 +408,7 @@ class XGBClassification(BaseModel):
 
         oof_preds = np.full((y.shape[0], self.n_classes), fill_value=np.nan)
         best_num_iterations = []
+        models = []
         for train_idx, test_idx in cv:
             sample_weight = compute_sample_weight(class_weight=None, y=y[train_idx])
 
@@ -426,6 +438,7 @@ class XGBClassification(BaseModel):
 
             oof_preds[test_idx] = model.predict_proba(X.iloc[test_idx])
             best_num_iterations.append(model.best_iteration)
+            models.append(model)
 
         # add `n_estimators` to the optuna parameters
         trial.set_user_attr("n_estimators", round(np.mean(best_num_iterations)))
@@ -435,10 +448,27 @@ class XGBClassification(BaseModel):
 
         if oof_preds.ndim == 2 and oof_preds.shape[1] == 2:
             # binary case
-            oof_preds = oof_preds[:, 1]
-
-        return scorer.score(y[not_none_oof], oof_preds[not_none_oof])
-
+            trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof, 1])
+        else:
+            trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof])
+        
+        if self.models is None:
+            # no trials are completed yet
+            # save tuned models
+            self.models = models
+            self.oof_preds = oof_preds
+            
+        elif (trial_metric <= trial.study.best_value and trial.study.direction == 1) or (
+            trial_metric >= trial.study.best_value and trial.study.direction == 2
+            ):
+            
+            # new best 
+            # save tuned models
+            self.models = models
+            self.oof_preds = oof_preds
+            
+        return trial_metric
+    
     def tune(
         self,
         X: FeaturesType,
@@ -508,6 +538,7 @@ class XGBClassification(BaseModel):
             "max_cat_to_onehot": self.max_cat_to_onehot,
             "n_jobs": self.n_jobs,
             "random_state": self.random_state,
+            "device": self.device,
         }
 
     @property
