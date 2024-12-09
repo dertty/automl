@@ -14,7 +14,7 @@ from catboost import CatBoostClassifier, Pool
 from lightautoml.automl.presets.tabular_presets import TabularAutoML
 from lightautoml.tasks import Task
 from multiprocessing import cpu_count
-#from automl.feature_selection.CustomMetrics import regression_roc_auc_score
+from .CustomMetrics import regression_roc_auc_score
 from ..loggers import get_logger
 from .utils import SmartCorrelatedSelectionFast
 

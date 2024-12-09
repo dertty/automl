@@ -321,7 +321,7 @@ class CatBoostClassification(BaseModel):
         self.time_series = time_series
         self.eval_metric = eval_metric
         self.task_type = task_type
-        
+
         if self.task_type is None and torch.cuda.is_available():
             task_type = "GPU"
         else:
@@ -337,7 +337,7 @@ class CatBoostClassification(BaseModel):
             self.kf = StratifiedKFold(
                 n_splits=5, random_state=self.random_state, shuffle=True
             )
-            
+
         self.models = None
         self.oof_preds = None
 
@@ -457,23 +457,24 @@ class CatBoostClassification(BaseModel):
             trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof, 1])
         else:
             trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof])
-        
-        if self.models is None:
-            # no trials are completed yet
-            # save tuned models
-            self.models = models
-            self.oof_preds = oof_preds
-            
-        elif (trial_metric <= trial.study.best_value and trial.study.direction == 1) or (
-            trial_metric >= trial.study.best_value and trial.study.direction == 2
-            ):
-            
-            # new best 
-            # save tuned models
-            self.models = models
-            self.oof_preds = oof_preds
-            
+
+        # if self.models is None:
+        #     # no trials are completed yet
+        #     # save tuned models
+        #     self.models = models
+        #     self.oof_preds = oof_preds
+
+        # elif (trial_metric <= trial.study.best_value and trial.study.direction == 1) or (
+        #     trial_metric >= trial.study.best_value and trial.study.direction == 2
+        #     ):
+
+        #     # new best
+        #     # save tuned models
+        #     self.models = models
+        #     self.oof_preds = oof_preds
+
         return trial_metric
+
     def tune(
         self,
         X: FeaturesType,

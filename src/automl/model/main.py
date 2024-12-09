@@ -173,17 +173,17 @@ class AutoML:
                         random_state=self.random_state,
                         time_series=self.time_series,
                     ),
-                    XGBClassification(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLama(
-                        task="classification",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
+                    # XGBClassification(
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
+                    # TabularLama(
+                    #     task="classification",
+                    #     n_jobs=self.n_jobs,
+                    #     random_state=self.random_state,
+                    #     time_series=self.time_series,
+                    # ),
                     # TabularLamaUtilized(
                     #     task="classification",
                     #     n_jobs=self.n_jobs,
@@ -379,32 +379,21 @@ class AutoML:
 
             log.info(f"Working with {model.name}", msg_type="start")
 
-            if model.name == "TabularLama":
-                    model.tune(
-                        x_train_iter,
-                        y,
-                        scorer=self.scorer,
-                        timeout=5 * 60,
-                        categorical_features=categorical_features
-                        )
-            else:
-                # tune the model
-                model.tune(
-                    x_train_iter,
-                    y,
-                    scorer=self.scorer,
-                    timeout=self.tuning_timeout,
-                    categorical_features=categorical_features,
-                )
-            
-            # fit the tuned model and predict on train
-            if model.name not in ["CatBoostClassification", "Stacker", "XGBClassification","LightGBMClassification"]:
-                oof_preds = model.fit(
-                    x_train_iter, y, categorical_features=categorical_features
-                )
-            else:
-                oof_preds = model.oof_preds
-                
+            # tune the model
+            model.tune(
+                x_train_iter,
+                y,
+                scorer=self.scorer,
+                timeout=self.tuning_timeout,
+                categorical_features=categorical_features,
+            )
+
+            # fit the tuned model and obtain out of fold predictions
+            oof_preds = model.fit(
+                x_train_iter, y, categorical_features=categorical_features
+            )
+
+            # predict on train
             y_trian_preds = model.predict(x_train_iter)
 
             # evaluate on train
@@ -485,6 +474,7 @@ class AutoML:
                     msg_type="best",
                 )
 
+            # store out-of-fold predictions if Blender or Stacker are in the models list
             if (self.blend or self.stack) and (
                 model.name not in ["Blender", "Stacker"]
             ):
@@ -494,6 +484,8 @@ class AutoML:
                 if Xs_test is not None:
                     test_preds.append(y_test_preds)
 
+        # adding flags on Blender, Stacker
+        # will be used in predict
         if self.best_model.name == "Blender":
             self.flag_blend_is_best = True
 
