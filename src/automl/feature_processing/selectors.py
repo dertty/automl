@@ -4,6 +4,7 @@ from typing import TypeVar, Optional, List
 from ..utils.utils import ArrayType
 from ..utils.utils import get_array_type, check_array_type
 from ..loggers import get_logger
+from .utils import find_correlated_features
 
 from feature_engine.selection.base_selector import BaseSelector
 from feature_engine.dataframe_checks import (

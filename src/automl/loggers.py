@@ -119,7 +119,7 @@ def get_logger(name):
     return logger
 
 
-def enable_logging_to_dir():
+def enable_logging_to_file():
     """Configure root logger to save logs in ml_data dir."""
     root_logger = logging.getLogger()
     

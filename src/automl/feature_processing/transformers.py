@@ -16,7 +16,7 @@ from lightautoml.tasks import Task
 from multiprocessing import cpu_count
 from .CustomMetrics import regression_roc_auc_score
 from ..loggers import get_logger
-from .utils import SmartCorrelatedSelectionFast
+from .selectors import SmartCorrelatedSelectionFast
 
 
 from sklearn.model_selection import train_test_split
@@ -581,7 +581,7 @@ class CatboostShapFeatureSelector(BaseEstimator, TransformerMixin):
         self,
         n_features_to_select=50,
         complexity="Regular",
-        steps=10,
+        steps=5,
         random_state=42,
         n_jobs=1):
         """Perform feature selection by recurcive catboost shap.
@@ -601,6 +601,8 @@ class CatboostShapFeatureSelector(BaseEstimator, TransformerMixin):
         self.n_jobs = n_jobs
         
     def fit(self, X, y, categorical_features=[]):
+        log.info(f'Started feature selection.', msg_type="feature_selection")
+        
         X_train, X_val, y_train, y_val = train_test_split(X.copy(), y.copy(), stratify=y, test_size=0.3, random_state=self.random_state)
         
         train_pool = Pool(X_train, y_train, cat_features=categorical_features)
@@ -612,9 +614,8 @@ class CatboostShapFeatureSelector(BaseEstimator, TransformerMixin):
         summary = model.select_features(train_pool, eval_set=val_pool,
                                 features_for_select=X_train.columns.tolist(),
                                 num_features_to_select=self.n_features_to_select,
-                                verbose=False,
                                 train_final_model=False,
-                                #logging_level="Silent",
+                                logging_level="Silent",
                                 algorithm=EFeaturesSelectionAlgorithm.RecursiveByShapValues,
                                 shap_calc_type=self.complexity, steps=self.steps)
         
