@@ -8,25 +8,16 @@ from typing_extensions import Self
 from ..constants import PATH, create_ml_data_dir
 from ..loggers import get_logger
 from ..metrics import get_scorer
-from .blender import CoordDescBlender, OptunaBlender
-from .catboost import CatBoostClassification, CatBoostRegression
-from .lama import TabularLama, TabularLamaNN, TabularLamaUtilized
+from .blender import CoordDescBlender
 from .lightgbm import LightGBMClassification, LightGBMRegression
-from .linear import LogisticRegression, RidgeRegression
-from .sklearn_forests import (
-    ExtraTreesClassification,
-    ExtraTreesRegression,
-    RandomForestClassification,
-    RandomForestRegression,
-)
+from .models_lists import NAMES_MODELS_MAPPING, all_models
 from .type_hints import FeaturesType, TargetType
 from .utils import convert_to_numpy, convert_to_pandas, save_yaml
-from .xgboost import XGBClassification, XGBRegression
 
 log = get_logger(__name__)
 
 
-class AutoML:
+class AutoModel:
     def __init__(
         self,
         task,
@@ -37,7 +28,6 @@ class AutoML:
         stack=False,
         n_jobs: int = 6,
         random_state: int = 42,
-        tuning_timeout=60,
     ):
         self.task = task
         self.metric = metric
@@ -47,203 +37,36 @@ class AutoML:
         self.time_series = time_series
         self.n_jobs = n_jobs
         self.random_state = random_state
-        self.tuning_timeout = tuning_timeout
-
-        self.models_list = models_list
 
         self.models_list = models_list
         if self.models_list is None:
-            # fill the model_list with models
-            if self.task == "regression":
-                self.models_list = [
-                    RidgeRegression(
-                        random_state=self.random_state, time_series=self.time_series
-                    ),
-                    RandomForestRegression(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    ExtraTreesRegression(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    CatBoostRegression(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    LightGBMRegression(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    XGBRegression(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLama(
-                        task="regression",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaUtilized(
-                        task="regression",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="regression",
-                        nn_name="mlp",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="regression",
-                        nn_name="denselight",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="regression",
-                        nn_name="dense",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="regression",
-                        nn_name="resnet",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="regression",
-                        nn_name="node",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="regression",
-                        nn_name="autoint",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLamaNN(
-                        task="regression",
-                        nn_name="fttransformer",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                ]
-            elif self.task == "classification":
-                self.models_list = [
-                    LogisticRegression(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    RandomForestClassification(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    ExtraTreesClassification(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    CatBoostClassification(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    LightGBMClassification(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    XGBClassification(
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    TabularLama(
-                        task="classification",
-                        n_jobs=self.n_jobs,
-                        random_state=self.random_state,
-                        time_series=self.time_series,
-                    ),
-                    # TabularLamaUtilized(
-                    #     task="classification",
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
-                    # TabularLamaNN(
-                    #     task="classification",
-                    #     nn_name="mlp",
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
-                    # TabularLamaNN(
-                    #     task="classification",
-                    #     nn_name="denselight",
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
-                    # TabularLamaNN(
-                    #     task="classification",
-                    #     nn_name="dense",
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
-                    # TabularLamaNN(
-                    #     task="classification",
-                    #     nn_name="resnet",
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
-                    # TabularLamaNN(
-                    #     task="classification",
-                    #     nn_name="node",
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
-                    # TabularLamaNN(
-                    #     task="classification",
-                    #     nn_name="autoint",
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
-                    # TabularLamaNN(
-                    #     task="classification",
-                    #     nn_name="fttransformer",
-                    #     n_jobs=self.n_jobs,
-                    #     random_state=self.random_state,
-                    #     time_series=self.time_series,
-                    # ),
-                ]
+            self.models_list = all_models[task]
+
+        # init models
+        initiated_models = []
+        common_model_params = {
+            "n_jobs": self.n_jobs,
+            "random_state": self.random_state,
+            "time_series": self.time_series,
+        }
+
+        # some tough logic to properly init models
+        # should be refactored in future
+        for model in self.models_list:
+            if isinstance(model, str):
+                models_by_name = NAMES_MODELS_MAPPING[model][task]
+                for temp_model in models_by_name:
+                    params = {}
+                    if isinstance(temp_model, tuple):
+                        temp_model, params = temp_model[0], temp_model[1]
+                    initiated_models.append(temp_model(**params, **common_model_params))
+            elif isinstance(model, tuple):
+                model, params = model[0], model[1]
+                initiated_models.append(model(**params, **common_model_params))
             else:
-                raise AttributeError(
-                    f"Task type '{self.task}' is not supported. Available tasks: 'regression', 'classification'."
-                )
+                initiated_models.append(model(**common_model_params))
+
+        self.models_list = initiated_models
 
         self.flag_stack_is_best = False
         if self.stack:
@@ -276,11 +99,12 @@ class AutoML:
         y: TargetType,
         Xs_test: Union[FeaturesType, List[FeaturesType]] = None,
         ys_test: Union[TargetType, List[TargetType]] = None,
+        tuning_timeout=60,
         categorical_features=[],
-        save_models=True,
+        save_models=False,
         save_params=True,
-        save_oof=True,
-        save_test=True,
+        save_oof=False,
+        save_test=False,
     ) -> Self:
         """If self.time_series == True -> X should be sorted by time."""
 
@@ -374,13 +198,16 @@ class AutoML:
                 x_train_iter,
                 y,
                 scorer=self.scorer,
-                timeout=self.tuning_timeout,
+                timeout=tuning_timeout,
                 categorical_features=categorical_features,
             )
-            # fit the tuned model and predict on train
+
+            # fit the tuned model and obtain out of fold predictions
             oof_preds = model.fit(
                 x_train_iter, y, categorical_features=categorical_features
             )
+
+            # predict on train
             y_trian_preds = model.predict(x_train_iter)
 
             # evaluate on train
@@ -461,13 +288,18 @@ class AutoML:
                     msg_type="best",
                 )
 
-            if (self.blend or self.stack) and model.name != "Blender":
+            # store out-of-fold predictions if Blender or Stacker are in the models list
+            if (self.blend or self.stack) and (
+                model.name not in ["Blender", "Stacker"]
+            ):
                 # save oof for blending
                 oofs.append(oof_preds)
 
                 if Xs_test is not None:
                     test_preds.append(y_test_preds)
 
+        # adding flags on Blender, Stacker
+        # will be used in predict
         if self.best_model.name == "Blender":
             self.flag_blend_is_best = True
 

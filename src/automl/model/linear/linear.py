@@ -29,6 +29,7 @@ class RidgeRegression(BaseModel):
         tune_alphas: List[float] = [0.1, 0.5, 1, 5, 10, 50],
         random_state: int = 42,
         time_series=False,
+        n_jobs=None,
     ):
 
         self.name = "RidgeRegression"
@@ -37,6 +38,7 @@ class RidgeRegression(BaseModel):
         self.tune_alphas = tune_alphas
         self.random_state = random_state
         self.time_series = time_series
+        self.n_jobs = None
 
         if self.time_series:
             self.kf = TimeSeriesSplit(n_splits=5)

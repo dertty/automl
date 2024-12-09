@@ -1,6 +1,7 @@
 import logging
 import sys
 from datetime import datetime
+from contextlib import ContextDecorator
 
 import optuna
 
@@ -25,7 +26,10 @@ msg_types_reprs = {
     "new_best": center_text("NEW BEST"),
     "best": center_text("BEST  MODEL"),
     "model": center_text("MODEL"),
-    "params": center_text("PARAMS")
+    "params": center_text("PARAMS"),
+    "preprocessing": center_text("PREPROC"),
+    "val_tests": center_text("VAL TESTS"),
+    "feature_selection": center_text("FEAT SEL")
 }
 
 # disable default optuna logs
@@ -115,7 +119,7 @@ def get_logger(name):
     return logger
 
 
-def enable_logging_to_dir():
+def enable_logging_to_file():
     """Configure root logger to save logs in ml_data dir."""
     root_logger = logging.getLogger()
     
@@ -125,3 +129,33 @@ def enable_logging_to_dir():
         create_ml_data_dir()
         root_logger.addHandler(get_info_file_handler())
         root_logger.addHandler(get_error_file_handler())
+        
+        
+class LoggerWriter:
+    """Logger with stdout interface."""
+
+    def __init__(self, logger):
+        self.logger = logger
+
+    def write(self, message):
+        if message != "\n":
+            self.logger.info(message[:-1])
+
+    def flush(self):
+        pass
+    
+
+class catchstdout(ContextDecorator):
+    """
+    Context manager that redirects stdout to logger.
+    """
+
+    def __init__(self, logger):
+        self.logger = logger
+
+    def __enter__(self):
+        self.save_stdout = sys.stdout
+        sys.stdout = LoggerWriter(self.logger)
+
+    def __exit__(self, type, value, traceback):
+        sys.stdout = self.save_stdout

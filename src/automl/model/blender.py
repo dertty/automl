@@ -1,7 +1,6 @@
 from copy import deepcopy
 
 import numpy as np
-import pandas as pd
 from scipy.optimize import minimize_scalar
 from sklearn.model_selection import StratifiedKFold, TimeSeriesSplit
 
@@ -249,9 +248,13 @@ class CoordDescBlender(BaseModel):
         weights = self.adjust_weights(weights, idx, self.drop_thresh)
         y_pred = self._compute_weighted_pred(X, weights)
 
+        # not_nan_idx = ~np.isnan(y_pred).any(axis=1)
+        # y_pred = y_pred[not_nan_idx]
+
         if y_pred.ndim == 2 and y_pred.shape[1] == 2:
             # binary case
             y_pred = y_pred[:, 1]
+
         metric = scorer.score(y, y_pred)
         return -1 * metric if scorer.greater_is_better else metric
 

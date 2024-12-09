@@ -20,12 +20,13 @@ def get_array_type(array: ArrayType) -> str:
 
 
 def check_array_type(type: str) -> None:
-    match type:
-        case 'pandas':
-            pass
-        case 'numpy':
-            raise ValueError(f"make_column_selector can only be applied to pandas dataframes but not {type}")
-        case 'polars':
-            raise ValueError(f"make_column_selector can only be applied to pandas dataframes but not {type}")
-        case _:
-            raise ValueError(f"make_column_selector can only be applied to pandas dataframes but not {type}")
+    pass
+    # match type:
+    #     case 'pandas':
+    #         pass
+    #     case 'numpy':
+    #         raise ValueError(f"make_column_selector can only be applied to pandas dataframes but not {type}")
+    #     case 'polars':
+    #         raise ValueError(f"make_column_selector can only be applied to pandas dataframes but not {type}")
+    #     case _:
+    #         raise ValueError(f"make_column_selector can only be applied to pandas dataframes but not {type}")
