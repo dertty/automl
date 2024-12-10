@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 from catboost import CatBoostClassifier as CBClass
 from catboost import CatBoostRegressor as CBReg
 from catboost import Pool
@@ -288,6 +289,7 @@ class CatBoostClassification(BaseModel):
         n_jobs=None,
         od_type="Iter",
         od_pval=None,
+        task_type=None,
     ):
 
         self.name = "CatBoostClassification"
@@ -318,6 +320,12 @@ class CatBoostClassification(BaseModel):
         self.allow_writing_files = allow_writing_files
         self.time_series = time_series
         self.eval_metric = eval_metric
+        self.task_type = task_type
+
+        if self.task_type is None and torch.cuda.is_available():
+            task_type = "GPU"
+        else:
+            task_type = "CPU"
 
         # correct alias params
         if self.n_jobs is not None:
@@ -329,6 +337,9 @@ class CatBoostClassification(BaseModel):
             self.kf = StratifiedKFold(
                 n_splits=5, random_state=self.random_state, shuffle=True
             )
+
+        self.models = None
+        self.oof_preds = None
 
     def fit(self, X: FeaturesType, y: TargetType, categorical_features=[]):
         log.info(f"Fitting {self.name}", msg_type="start")
@@ -416,6 +427,7 @@ class CatBoostClassification(BaseModel):
 
         oof_preds = np.full((y.shape[0], self.n_classes), fill_value=np.nan)
         best_num_iterations = []
+        models = []
         for train_idx, test_idx in cv:
             train_data = Pool(
                 X.iloc[train_idx], y[train_idx], cat_features=self.cat_features
@@ -432,6 +444,7 @@ class CatBoostClassification(BaseModel):
 
             oof_preds[test_idx] = model.predict_proba(test_data)
             best_num_iterations.append(model.best_iteration_)
+            models.append(model)
 
         # add `iterations` as an optuna parameter
         trial.set_user_attr("iterations", round(np.mean(best_num_iterations)))
@@ -441,9 +454,26 @@ class CatBoostClassification(BaseModel):
 
         if oof_preds.ndim == 2 and oof_preds.shape[1] == 2:
             # binary case
-            oof_preds = oof_preds[:, 1]
+            trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof, 1])
+        else:
+            trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof])
 
-        return scorer.score(y[not_none_oof], oof_preds[not_none_oof])
+        # if self.models is None:
+        #     # no trials are completed yet
+        #     # save tuned models
+        #     self.models = models
+        #     self.oof_preds = oof_preds
+
+        # elif (trial_metric <= trial.study.best_value and trial.study.direction == 1) or (
+        #     trial_metric >= trial.study.best_value and trial.study.direction == 2
+        #     ):
+
+        #     # new best
+        #     # save tuned models
+        #     self.models = models
+        #     self.oof_preds = oof_preds
+
+        return trial_metric
 
     def tune(
         self,
@@ -505,6 +535,7 @@ class CatBoostClassification(BaseModel):
             "allow_writing_files": self.allow_writing_files,
             "od_type": self.od_type,
             "od_wait": self.od_wait,
+            "task_type": self.task_type,
         }
         if not_tuned_params.get("od_type", "Iter") == "Iter":
             not_tuned_params["od_pval"] = 0

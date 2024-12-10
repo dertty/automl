@@ -1,7 +1,9 @@
 import numbers
 import pandas as pd
+import polars as pl
 import numpy as np
-from feature_engine.selection import SmartCorrelatedSelection
+from feature_engine.selection import SmartCorrelatedSelection, DropHighPSIFeatures
+from feature_engine.outliers import Winsorizer
 from sklearn.ensemble._bagging import _generate_indices
 from sklearn.model_selection._validation import _aggregate_score_dicts
 from sklearn.utils import Bunch, _safe_indexing, check_array, check_random_state
@@ -12,9 +14,50 @@ from catboost import CatBoostClassifier, Pool
 from lightautoml.automl.presets.tabular_presets import TabularAutoML
 from lightautoml.tasks import Task
 from multiprocessing import cpu_count
-from automl.feature_selection.CustomMetrics import regression_roc_auc_score
-from automl.loggers import get_logger
+from .CustomMetrics import regression_roc_auc_score
+from ..loggers import get_logger
+from .selectors import SmartCorrelatedSelectionFast
+
+
+from sklearn.model_selection import train_test_split
+
+from catboost import CatBoostClassifier
+from catboost import EFeaturesSelectionAlgorithm, EShapCalcType
+from catboost import Pool
+
 log = get_logger(__name__)
+
+
+class WinsorizerFast(BaseEstimator, TransformerMixin):
+    """
+    Much faster version of Winsorizer.
+    Drastically accelerates `transform` via `polars`.
+    """
+    def __init__(self,
+                 capping_method='gaussian',
+                 tail='both',
+                 missing_values='ignore'):
+        super().__init__()
+        self.capping_method = capping_method
+        self.tail = tail
+        self.missing_values = missing_values
+        self.clipper = Winsorizer(capping_method=self.capping_method,
+                                 tail=self.tail,
+                                 missing_values=self.missing_values)
+        
+    def fit(self, X, y=None):
+        self.clipper.fit(X)
+        return self
+        
+    def transform(self, X, y=None):
+        X = X.copy()
+        input_idx = X.index
+        X = pl.DataFrame(X).with_columns(pl.col(i).clip(lower_bound=self.clipper.left_tail_caps_[i], upper_bound=self.clipper.right_tail_caps_[i]) for i in self.clipper.right_tail_caps_.keys())
+        
+        return X.to_pandas().set_index(input_idx)
+    
+    def set_output(self, *, transform):
+        return self
 
 class AdversarialTestTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, split_col='is_test_for_val', random_state=42, auc_trshld = 0.65):
@@ -71,7 +114,8 @@ class AdversarialTestTransformer(BaseEstimator, TransformerMixin):
                 'od_wait': 5,
                 'random_seed': self.random_state,
                 'ignored_features': [],
-                'depth': 4
+                'depth': 4,
+                "verbose": False
             }
         model = CatBoostClassifier(**params)
         model.fit(train_data, eval_set=holdout_data)
@@ -90,11 +134,49 @@ class AdversarialTestTransformer(BaseEstimator, TransformerMixin):
             top_fi_name = cb_feature_importance_df.iloc[0]['feature_names']
         self.adversarial_drop_features = ignore_features
         
+        if len(self.adversarial_drop_features) > 0:
+            log.info(f"Features not passing adversarial test to drop: {self.adversarial_drop_features}", msg_type="val_tests")
+        
         return self
     
     def transform(self, X):
+        X = X.drop(self.adversarial_drop_features, axis=1)
         
-        X.drop(self.adversarial_drop_features, axis=1, inplace=True)
+        return X
+    
+    
+class DropHighPSITransformer(BaseEstimator, TransformerMixin):
+    def __init__(self, split_col='is_test_for_val', psi_cut_off=0.5, psi_threshold=0.2,
+                 psi_bins=15, psi_strategy='equal_width', psi_missing_values='ignore'):
+        '''PSI test.
+        '''
+        self.split_col = split_col
+        self.psi_cut_off = psi_cut_off
+        self.psi_threshold = psi_threshold
+        self.psi_bins = psi_bins
+        self.psi_strategy = psi_strategy
+        self.psi_missing_values = psi_missing_values
+        self.psi_features_to_drop = []
+        
+        self.transformer = DropHighPSIFeatures(split_col=self.split_col,
+                                               cut_off=self.psi_cut_off,
+                                               threshold=self.psi_threshold,
+                                               bins=self.psi_bins,
+                                               strategy=self.psi_strategy,
+                                               missing_values=self.psi_missing_values)
+
+    def fit(self, X, y=None):
+        
+        self.transformer.fit(X)
+        self.psi_features_to_drop = self.transformer.features_to_drop_
+        
+        if len(self.psi_features_to_drop) > 0:
+            log.info(f"Features not passing psi test to drop: {self.psi_features_to_drop}", msg_type="val_tests")
+        
+        return self
+    
+    def transform(self, X):
+        X = X.drop(columns = self.psi_features_to_drop, axis=1)
         
         return X
    
@@ -112,11 +194,33 @@ class CorrFeaturesTransformer(BaseEstimator, TransformerMixin):
             scs = SmartCorrelatedSelection(threshold=self.corr_ts, method=corr_coef_method, selection_method=self.corr_selection_method)
             scs.fit(X)
             self.drop_corr_features += scs.features_to_drop_
+            
+        if len(self.drop_corr_features) > 0:
+            log.info(f"Corr features to drop: {self.drop_corr_features}", msg_type="preprocessing")
+    
+        return self
+    
+class CorrFeaturesTransformerFast(BaseEstimator, TransformerMixin):
+    def __init__(self, corr_ts=0.8, corr_coef_methods=['pearson', 'spearman'], corr_selection_method="missing_values"):
+    
+        self.corr_coef_methods = corr_coef_methods
+        self.corr_selection_method = corr_selection_method
+        self.corr_ts = corr_ts
+        self.drop_corr_features = []
+    
+    def fit(self, X, y):
+    
+        for corr_coef_method in self.corr_coef_methods:
+            scs = SmartCorrelatedSelectionFast(threshold=self.corr_ts, method=corr_coef_method, selection_method=self.corr_selection_method)
+            scs.fit(X)
+            self.drop_corr_features += scs.features_to_drop_
+            
+        if len(self.drop_corr_features) > 0:
+            log.info(f"Corr features to drop: {self.drop_corr_features}", msg_type="preprocessing")
     
         return self
  
     def transform(self, X):
-
         self.drop_corr_features = list(set(self.drop_corr_features))
         X.drop(self.drop_corr_features, axis=1, inplace=True)
  
@@ -470,3 +574,59 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
         X = X[self.selected_features + [self.target_colname]]
        
         return X
+    
+    
+class CatboostShapFeatureSelector(BaseEstimator, TransformerMixin):
+    def __init__(
+        self,
+        n_features_to_select=50,
+        complexity="Regular",
+        steps=5,
+        random_state=42,
+        n_jobs=1):
+        """Perform feature selection by recurcive catboost shap.
+
+        Args:
+            n_features_to_select (int, optional). Defaults to 50.
+            complexity (str, optional): One of ["Approximate", "Regular", "Exact"]. Defaults to "Regular".
+            steps (int, optional). Defaults to 10.
+            random_state (int, optional). Defaults to 42.
+            n_jobs (int, optional). Defaults to 1.
+        """
+        
+        self.n_features_to_select = n_features_to_select
+        self.complexity = EShapCalcType[complexity]
+        self.steps = steps
+        self.random_state = random_state
+        self.n_jobs = n_jobs
+        
+    def fit(self, X, y, categorical_features=[]):
+        log.info(f'Started feature selection.', msg_type="feature_selection")
+        
+        X_train, X_val, y_train, y_val = train_test_split(X.copy(), y.copy(), stratify=y, test_size=0.3, random_state=self.random_state)
+        
+        train_pool = Pool(X_train, y_train, cat_features=categorical_features)
+        val_pool = Pool(X_val, y_val, cat_features=categorical_features)
+        
+        model = CatBoostClassifier(random_state=self.random_state, verbose=0, early_stopping_rounds=200, iterations=2500,
+                                   thread_count=self.n_jobs, allow_writing_files=False)
+        
+        summary = model.select_features(train_pool, eval_set=val_pool,
+                                features_for_select=X_train.columns.tolist(),
+                                num_features_to_select=self.n_features_to_select,
+                                train_final_model=False,
+                                logging_level="Silent",
+                                algorithm=EFeaturesSelectionAlgorithm.RecursiveByShapValues,
+                                shap_calc_type=self.complexity, steps=self.steps)
+        
+        self.selected_features = summary["selected_features_names"]
+        
+        log.info(f'Selected features: {self.selected_features}', msg_type="feature_selection")
+        
+        return self
+    
+    def transform(self, X, y=None, **kwargs):
+        
+        X = X.copy().loc[:, self.selected_features]
+        return X
+        

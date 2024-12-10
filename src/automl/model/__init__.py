@@ -1,1 +1,1 @@
-from .main import AutoML
+from .main import AutoModel
