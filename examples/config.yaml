@@ -1,0 +1,33 @@
+RANDOM_STATE: 42
+N_JOBS: 5
+TARGET: satisfaction
+TASK: classification
+LOG_TO_FILE: True
+
+preprocessing_pipeline_kwargs: 
+    obj_encoders:
+        - oe
+        
+feature_selector_type: CatboostByShap
+
+feature_selector_kwargs:
+    n_features_to_select: 10
+    steps: 5
+    
+auto_models_init_kwargs:
+    metric: roc_auc
+    time_series: False
+    models_list:
+        - linear
+        - forests
+        - boostings
+        - lama
+    blend: True
+    stack: True
+
+auto_models_fit_kwargs:
+    tuning_timeout: 60
+    save_models: False
+    save_params: True
+    save_oof: False
+    save_test: False
