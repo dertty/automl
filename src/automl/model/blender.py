@@ -4,9 +4,9 @@ import numpy as np
 from scipy.optimize import minimize_scalar
 from sklearn.model_selection import StratifiedKFold, TimeSeriesSplit
 
-from src.automl.loggers import get_logger
-from src.automl.model.base_model import BaseModel
-from src.automl.model.utils import convert_to_numpy, tune_optuna
+from automl.loggers import get_logger
+from automl.model.base_model import BaseModel
+from automl.model.utils import convert_to_numpy, tune_optuna
 
 log = get_logger(__name__)
 

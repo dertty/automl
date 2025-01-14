@@ -1,5 +1,6 @@
 import enum
 
+from automl.metrics import ScorerWrapper
 from .type_hints import FeaturesType, TargetType
 
 
@@ -19,7 +20,7 @@ class BaseModel:
     def fit(self, X: FeaturesType, y: TargetType):
         raise NotImplementedError
 
-    def tune(self, X: FeaturesType, y: TargetType, metric=None, timeout=None):
+    def tune(self, X: FeaturesType, y: TargetType, scorer: ScorerWrapper, timeout: int, categorical_features: list[str]=[]):
         raise NotImplementedError
 
     def _predict(self, X_test):
