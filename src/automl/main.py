@@ -155,7 +155,7 @@ class AutoML:
         X_test=None,
         y_test=None,
         max_obs_for_preproc=100_000,
-        auto_models_fit_kwargs={},
+        auto_model_fit_kwargs={},
     ):
         """Fit the AutoML on train data.
 
@@ -222,8 +222,9 @@ class AutoML:
             X_test,
             y_test,
             categorical_features=categorical_features,
-            **auto_models_fit_kwargs,
+            **auto_model_fit_kwargs,
         )
+        return self
 
     def predict(self, X_test):
         """Inference the AutoML
