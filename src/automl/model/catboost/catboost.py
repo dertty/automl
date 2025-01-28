@@ -1,113 +1,126 @@
 import numpy as np
-import torch
-import inspect
 from catboost import CatBoostClassifier as CBClass
 from catboost import CatBoostRegressor as CBReg
 from catboost import Pool
-from sklearn.model_selection import KFold, StratifiedKFold, TimeSeriesSplit
 
-from typing import Any
-from automl.metrics import ScorerWrapper
+from typing import Any, Optional, List, Dict, Union
 from ...loggers import get_logger
 from ..base_model import BaseModel
 from ..type_hints import FeaturesType, TargetType
-from ..utils import convert_to_numpy, convert_to_pandas, tune_optuna
-from .metrics import get_eval_metric
+from ..utils import tune_optuna
+from ..utils.model_utils import get_splitter, get_epmty_array
+
 
 log = get_logger(__name__)
 
 
-class CatBoostBase(BaseModel):
-    __allowed = (x for x in \
-        list(inspect.signature(CBClass.__init__).parameters.keys()) + \
-            list(inspect.signature(CBReg.__init__).parameters.keys())\
-                if x not in ['self'])
+class CatBoostBase(BaseModel):   
     def __init__(
         self,
         model_type: str,
         random_state: int = 42,
         time_series: bool = False,
         verbose: bool = False,
-        task_type: str | None = None,
-        n_jobs: int = -1,
+        device_type: Optional[str] = None,
+        n_jobs: Optional[int] = None,
         n_splits: int = 5,
+        eval_metric: Optional[str | Any] = None,
         **kwargs,
     ):
-        self.model_type = model_type
-        match self.model_type:
-            case 'classification':
-                self.name = "CatBoostClassification"
-                self.model = CBClass
-                self.model_predict_func_name = 'predict_proba'
-            case 'regression':
-                self.name = "CatBoostRegression"
-                self.model = CBReg
-                self.model_predict_func_name = 'predict'
-            case _:
-                raise ValueError("Invalid model_type. Use 'classification' or 'regression'.")
-
+        super().__init__(
+            model_type=model_type,
+            random_state=random_state,
+            time_series=time_series,
+            verbose=verbose,
+            device_type=device_type,
+            n_jobs=n_jobs,
+            n_splits=n_splits,
+            eval_metric=eval_metric,
+            )
+        
+        if self.model_type == 'classification':
+            self.name: str = "CatBoostClassification"
+            self.model = CBClass
+            self.model_predict_func_name: str = 'predict_proba'
+        elif self.model_type == 'regression':
+            self.name = "CatBoostRegression"
+            self.model = CBReg
+            self.model_predict_func_name = 'predict'
+                
         # model params
-        self.thread_count = n_jobs or kwargs.pop("thread_count", 6)
-        self.random_state = random_state
-        self.verbose = verbose
-        self.task_type = task_type or ("GPU" if torch.cuda.is_available() else "CPU")
+        self.thread_count = kwargs.pop('thread_count', self.n_jobs)
+        self.task_type = kwargs.pop('task_type', self.device_type).upper()
+        self.verbose = kwargs.pop('verbose', None) or kwargs.pop('verbose_eval', self.verbose)
         # other model params
-        self.iterations = kwargs.pop('iterations', 2_000)
+        self.iterations: int = kwargs.pop('num_iterations', 2_000)
+        self.iterations = kwargs.pop('iterations', None) or kwargs.pop('n_iterations', self.iterations)
         self.max_iterations = self.iterations
         self.od_type = kwargs.pop('od_type', 'Iter')
         self.od_wait = kwargs.pop('od_wait', 100)
         self.od_pval = None if self.od_type == "Iter" else kwargs.pop('od_pval', 1e-5)
-        
+        self.logging_level = kwargs.pop('logging_level', 'Silent')
         # fit params
-        self.time_series = time_series
-        self.n_splits = n_splits
-        self.cat_features: list[str] = []
-        self.models: list[CBClass | CBReg] | None = None
-        self.oof_preds = None
-        self.eval_metric = None
-        self.kf = (
-            TimeSeriesSplit(n_splits=n_splits) if time_series else
-            StratifiedKFold(n_splits=n_splits, random_state=random_state, shuffle=True)
-        )
-        # tune params
-        self.best_params: dict[str, Any] = {}
+        self.cat_features: List[str] = []
+        self.models: Optional[List[Union[CBClass, CBReg]]] = None
+        self.n_classes: Optional[int] = None
         
+        self._not_inner_model_params += [
+            'model', 'model_predict_func_name', 'n_classes', 
+            'n_jobs', 'eval_metric', 'device_type', 'verbose',]
         for k, v in kwargs.items():
-            assert(k in self.__class__.__allowed)
             setattr(self, k, v)
-        
+    
+    def _prepare(self, X: FeaturesType, y: TargetType = None, categorical_feature: Optional[List[Union[str, int]]] = None):
+        X, y = self._prepare_data(X, y, categorical_feature)
+        self.cat_features = self.categorical_feature
+        if self.categorical_feature:
+            filtered_columns = X.select_dtypes(exclude=['object', 'int']).columns
+            cast_columns = list(set(self.categorical_feature) & set(filtered_columns))
+            X[cast_columns] = X[cast_columns].astype(str)
+        if y is not None:
+            if self.model_type == "classification":
+                self.n_classes = np.unique(y).shape[0]
+            return X, y
+        return X
 
-    def fit(self, X: FeaturesType, y: TargetType, categorical_features: list[str]=[]):
+    def fit_fold(
+        self, 
+        X_train: FeaturesType, y_train: TargetType,
+        X_test: FeaturesType, y_test: TargetType,
+        inner_params: Dict[Any, Any] = {}
+        ):
+        train_data = Pool(
+            X_train, y_train, 
+            cat_features=self.categorical_feature)
+        test_data = Pool(
+            X_test, y_test, 
+            cat_features=self.categorical_feature)
+        
+        fold_model = self.model(**inner_params)
+        fold_model.fit(train_data, eval_set=test_data, verbose=self.verbose)
+        
+        best_score_dict: Dict[str, float] = fold_model.get_best_score()['validation']
+        for _, value in best_score_dict.items():
+            best_score: float = value
+        return fold_model, best_score
+        
+    def fit(self, X: FeaturesType, y: TargetType, categorical_feature: Optional[List[Union[str, int]]] = None):
         log.info(f"Fitting {self.name}", msg_type="start")
 
-        self.cat_features = categorical_features
-        X = convert_to_pandas(X)
-        y = convert_to_numpy(y)
-        y = y.reshape(-1) if len(y.shape) == 1 or y.shape[1] == 1 else y
-        self.n_classes = np.unique(y).shape[0]
-
-        cv = self.kf.split(X, y)
-
+        X, y = self._prepare(X, y, categorical_feature)
+        kf = get_splitter(self.model_type, n_splits=self.n_splits, time_series=self.time_series, random_state=self.random_state)
+        cv = kf.split(X, y)
         self.models = []
-        oof_preds = np.full((y.shape[0], self.n_classes), fill_value=np.nan)
+        oof_preds = get_epmty_array(y.shape[0], self.n_classes)
         for i, (train_idx, test_idx) in enumerate(cv):
-            log.info(f"{self.name} fold {i}", msg_type="fit")
-
-            train_data = Pool(
-                X.iloc[train_idx], y[train_idx], cat_features=self.cat_features
-            )
-            test_data = Pool(
-                X.iloc[test_idx], y[test_idx], cat_features=self.cat_features
-            )
-
-            # initialize fold model
-            fold_model = self.model(**self.inner_params)
-
-            # fit/predict fold model
-            fold_model.fit(train_data, eval_set=test_data)
+            # log.info(f"{self.name} fold {i}", msg_type="fit")
+            X_train, y_train, X_test, y_test = self._get_train_test_data(X, y, train_idx, test_idx)
+            fold_model, _ = self.fit_fold(
+                X_train, y_train, 
+                X_test, y_test,
+                inner_params=self.inner_params)
+            test_data = Pool(X_test, cat_features=self.categorical_feature)
             oof_preds[test_idx] = getattr(fold_model, self.model_predict_func_name)(test_data)
-
-            # append fold model
             self.models.append(fold_model)
 
         log.info(f"Fitting {self.name}", msg_type="end")
@@ -151,99 +164,88 @@ class CatBoostBase(BaseModel):
             default_param_distr["max_leaves"] = trial.suggest_int("max_leaves", 10, 512)
 
         return default_param_distr
-            
-    @staticmethod
-    def get_trial_params(trial):
-        raise NotImplementedError
         
-    def objective(self, trial, X: FeaturesType, y: TargetType, scorer: ScorerWrapper):
-        cv = self.kf.split(X, y)
+    def optuna_objective(self, trial, X: FeaturesType, y: TargetType):
+        kf = get_splitter(self.model_type, n_splits=self.n_splits, time_series=self.time_series, random_state=self.random_state)
+        cv = kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
         not_tuned_params = self.not_tuned_params
         not_tuned_params['iterations'] = self.max_iterations
+        inner_params = {**not_tuned_params, **trial_params}
 
-        oof_preds = np.full((y.shape[0], self.n_classes), fill_value=np.nan)
         best_num_iterations = []
-        models = []
-        for train_idx, test_idx in cv:
-            train_data = Pool(
-                X.iloc[train_idx], y[train_idx], cat_features=self.cat_features
-            )
-            test_data = Pool(
-                X.iloc[test_idx], y[test_idx], cat_features=self.cat_features
-            )
-
-            fold_model = self.model(
-                **trial_params, **not_tuned_params
-            )
-
-            fold_model.fit(train_data, eval_set=test_data)
-
-            oof_preds[test_idx] = getattr(fold_model, self.model_predict_func_name)(test_data)
+        scores = []
+        for i, (train_idx, test_idx) in enumerate(cv):
+            X_train, y_train, X_test, y_test = self._get_train_test_data(X, y, train_idx, test_idx)
+            fold_model, score = self.fit_fold(
+                X_train, y_train,
+                X_test, y_test,
+                inner_params=inner_params)
+            scores.append(score)
+            # oof_preds[test_idx] = getattr(fold_model, self.model_predict_func_name)(test_data)
             best_num_iterations.append(fold_model.best_iteration_)
-            models.append(fold_model)
 
         # add `iterations` as an optuna parameter
-        trial.set_user_attr("iterations", round(np.mean(best_num_iterations)))
+        trial.set_user_attr("iterations", max(1, round(np.mean(best_num_iterations))))
+        return np.mean(scores)
+        # # remove possible Nones in oof
+        # not_none_oof = np.where(np.logical_not(np.isnan(oof_preds[:, 0])))[0]
 
-        # remove possible Nones in oof
-        not_none_oof = np.where(np.logical_not(np.isnan(oof_preds[:, 0])))[0]
+        # if self.model_type == 'classification' and self.n_classes == 2:
+        #     # binary case
+        #     trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof, 1])
+        # else:
+        #     trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof])
 
-        if oof_preds.ndim == 2 and oof_preds.shape[1] == 2:
-            # binary case
-            trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof, 1])
-        else:
-            trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof])
-
-        return trial_metric
+        # return trial_metric
 
     def tune(
         self,
         X: FeaturesType,
         y: TargetType,
-        scorer: ScorerWrapper,
         timeout: int=60,
-        categorical_features: list[str]=[],
+        categorical_feature: Optional[List[str]] = None,
     ):
         log.info(f"Tuning {self.name}", msg_type="start")
+        
+        from .metrics import METRICS_GREATER_IS_BETTER
+        
+        if isinstance(self.eval_metric, str):
+            greater_is_better = self.get_str_greater_is_better(
+                self.model_type, 
+                self.eval_metric, 
+                METRICS_GREATER_IS_BETTER)
+        elif self.eval_metric is not None:
+            greater_is_better = self.eval_metric.is_max_optimal()
+        else:
+            greater_is_better = None
 
-        self.cat_features = categorical_features
-        self.eval_metric = get_eval_metric(scorer)
-
-        X = convert_to_pandas(X)
-        y = convert_to_numpy(y)
-        y = y.reshape(-1) if len(y.shape) == 1 or y.shape[1] == 1 else y
-        self.n_classes = np.unique(y).shape[0]
-
+        X, y = self._prepare(X, y, categorical_feature)
         study = tune_optuna(
             self.name,
-            self.objective,
-            X=X,
-            y=y,
-            scorer=scorer,
+            self.optuna_objective,
+            X=X, y=y,
+            greater_is_better=greater_is_better,
             timeout=timeout,
-            random_state=self.random_state,
-        )
-
-        # set best parameters
-        # for key, val in study.best_params.items():
-        #     setattr(self, key, val)
-        self.iterations = study.best_trial.user_attrs["iterations"]
+            random_state=self.random_state,)
         self.best_params = study.best_params
+        self.best_params['iterations'] = study.best_trial.user_attrs["iterations"]
+
         log.info(f"{len(study.trials)} trials completed", msg_type="optuna")
         log.info(f"{self.params}", msg_type="best_params")
         log.info(f"Tuning {self.name}", msg_type="end")
 
-    def _predict(self, X_test: FeaturesType):
+    def _predict(self, X: FeaturesType):
         """Predict on one dataset. Average all fold models"""
-        X_test = convert_to_pandas(X_test)
-
-        y_pred = np.zeros((X_test.shape[0], self.n_classes))
+        X = self._prepare(X, categorical_feature=self.categorical_feature)
+        
+        y_pred = np.zeros((X.shape[0], self.n_classes)) \
+            if self.n_classes else np.zeros((X.shape[0],))
         for fold_model in self.models:
-            y_pred += getattr(fold_model, self.model_predict_func_name)(X_test)
-
+            y_pred += getattr(fold_model, self.model_predict_func_name)(X)
         y_pred = y_pred / len(self.models)
+        
         return y_pred
 
     @property
@@ -251,11 +253,13 @@ class CatBoostBase(BaseModel):
         not_tuned_params = {
             "thread_count": self.thread_count,
             "random_state": self.random_state,
-            "verbose": self.verbose,
+            # "verbose": self.verbose,
+            'logging_level': self.logging_level,
             "task_type": self.task_type,
             "od_type": self.od_type,
             "od_wait": self.od_wait,
             "od_pval": self.od_pval,
+            
         }
         return {key: value for key, value in not_tuned_params.items() if value}
 
@@ -264,31 +268,9 @@ class CatBoostBase(BaseModel):
         return {
             'iterations': self.iterations,
             **self.not_tuned_params,
-            **{key: value for key, value in self.__dict__.items() if key in self.__class__.__allowed},
+            **{key: value for key, value in self.__dict__.items() if key not in self._not_inner_model_params},
             **self.best_params,
         }
-
-    @property
-    def meta_params(self) -> dict:
-        return {
-            "eval_metric": (
-                self.eval_metric
-                if isinstance(self.eval_metric, str) or self.eval_metric is None
-                else "custom_metric"
-            ),
-            "time_series": self.time_series,
-            'model_type': self.model_type,
-            'model_predict_func_name': self.model_predict_func_name,
-            'n_splits': self.n_splits,
-        }
-
-    @property
-    def params(self) -> dict:
-        return {
-            **self.inner_params,
-            **self.meta_params,
-        }
-
 
 class CatBoostClassification(CatBoostBase):
     def __init__(
@@ -296,9 +278,10 @@ class CatBoostClassification(CatBoostBase):
         random_state: int = 42,
         time_series: bool = False,
         verbose: bool = False,
-        task_type: str | None = None,
-        n_jobs: int = -1,
+        device_type: str | None = None,
+        n_jobs: Optional[int] = None,
         n_splits: int = 5,
+        eval_metric: Optional[str | Any] = None,
         **kwargs,
     ):
         super().__init__(
@@ -306,9 +289,10 @@ class CatBoostClassification(CatBoostBase):
             random_state=random_state,
             time_series=time_series,
             verbose=verbose,
-            task_type=task_type,
+            device_type=device_type,
             n_jobs=n_jobs,
             n_splits=n_splits,
+            eval_metric=eval_metric,
             **kwargs,
         )
     
@@ -325,9 +309,10 @@ class CatBoostRegression(CatBoostBase):
         random_state: int = 42,
         time_series: bool = False,
         verbose: bool = False,
-        task_type: str | None = None,
-        n_jobs: int = -1,
+        device_type: str | None = None,
+        n_jobs: Optional[int] = None,
         n_splits: int = 5,
+        eval_metric: Optional[str | Any] = None,
         **kwargs,
     ):
         super().__init__(
@@ -335,18 +320,16 @@ class CatBoostRegression(CatBoostBase):
             random_state=random_state,
             time_series=time_series,
             verbose=verbose,
-            task_type=task_type,
+            device_type=device_type,
             n_jobs=n_jobs,
             n_splits=n_splits,
+            eval_metric=eval_metric,
             **kwargs,
         )
     
     @staticmethod
     def get_trial_params(trial):
-        # Получить базовые параметры из родительского класса
         params = CatBoostBase.get_base_trial_params(trial)
-
-        # Добавить новые параметры для тюнинга
         params.update({
             "loss_function": trial.suggest_categorical(
                 "loss_function", ["RMSE", "MAE", "MAPE",]

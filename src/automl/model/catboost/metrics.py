@@ -2,6 +2,38 @@ import numpy as np
 from sklearn.metrics import get_scorer_names
 
 
+METRICS_GREATER_IS_BETTER = {
+            # Регрессионные метрики (чем меньше, тем лучше)
+            "RMSE": False,
+            "MAE": False,
+            "Quantile": False,
+            "LogLinQuantile": False,
+            "MAPE": False,
+            "Poisson": False,
+            "MultiRMSE": False,
+            
+            # Классификационные метрики (чем больше, тем лучше)
+            "Accuracy": True,
+            "BalancedAccuracy": True,
+            "AUC": True,
+            "F1": True,
+            "Precision": True,
+            "Recall": True,
+            "MCC": True,
+            "Logloss": False,
+            "CrossEntropy": False,
+            "PRAUC": True,
+            "Tweedie": False,
+            
+            # Ранжирование (чем больше, тем лучше)
+            "NDCG": True,
+            "DCG": True,
+            "PFound": True,
+            "AverageGain": True,
+            "QueryAverage": True,
+        }
+
+
 def get_custom_catboost_metric(score_func, greater_is_better):
     class CustomMetric:
         def is_max_optimal(self):

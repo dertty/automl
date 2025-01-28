@@ -1,380 +1,169 @@
-from copy import deepcopy
-
 import numpy as np
-import torch
-from sklearn.model_selection import KFold, StratifiedKFold, TimeSeriesSplit
 from sklearn.utils import compute_sample_weight
-from xgboost import XGBClassifier as XGBClass
-from xgboost import XGBRegressor as XGBReg
+import xgboost as xgb
 
+from typing import Any, Optional, Callable, Union, List
 from ...loggers import get_logger
 from ..base_model import BaseModel
 from ..type_hints import FeaturesType, TargetType
-from ..utils import convert_to_numpy, convert_to_pandas, tune_optuna
-from .metrics import get_eval_metric
+from ..utils import tune_optuna
+from ..utils.model_utils import get_splitter, get_epmty_array
+
 
 log = get_logger(__name__)
 
 
-class XGBRegression(BaseModel):
+class XGBBase(BaseModel):
     def __init__(
         self,
-        objective="reg:squarederror",
-        n_estimators=100,
-        learning_rate=0.03,
-        max_depth=None,
-        max_leaves=None,
-        grow_policy="lossguide",
-        gamma=0,
-        min_child_weight=1,
-        subsample=1,
-        colsample_bytree=1,
-        colsample_bylevel=1,
-        reg_lambda=1,
-        reg_alpha=0,
-        early_stopping_rounds=100,
-        enable_categorical=True,
-        max_cat_to_onehot=5,
-        n_jobs=6,
-        random_state=42,
-        time_series=False,
+        model_type: str,
+        random_state: int = 42,
+        time_series: bool = False,
+        verbose: int = 0,
+        device_type: Optional[str] = None,
+        n_jobs: int = None,
+        n_splits: int = 5,
+        eval_metric: Optional[Union[str, Callable]] = None,
+        **kwargs,
     ):
-
-        self.name = "XGBRegression"
-
-        self.categorical_features = []
-        self.enable_categorical = enable_categorical
-        self.max_cat_to_onehot = max_cat_to_onehot
-
-        self.objective_type = objective
-        self.n_estimators = n_estimators
-        self.learning_rate = learning_rate
-        self.max_depth = max_depth
-        self.max_leaves = max_leaves
-        self.grow_policy = grow_policy
-        self.gamma = gamma
-        self.min_child_weight = min_child_weight
-        self.subsample = subsample
-        self.colsample_bytree = colsample_bytree
-        self.colsample_bylevel = colsample_bylevel
-        self.reg_lambda = reg_lambda
-        self.reg_alpha = reg_alpha
-
-        self.n_jobs = n_jobs
-        self.random_state = random_state
-        self.verbosity = 0
-        self.early_stopping_rounds = early_stopping_rounds
-        self.time_series = time_series
-
-        if self.time_series:
-            self.kf = TimeSeriesSplit(n_splits=5)
+        super().__init__(
+            model_type=model_type,
+            random_state=random_state,
+            time_series=time_series,
+            verbose=verbose,
+            device_type=device_type,
+            n_jobs=n_jobs,
+            n_splits=n_splits,
+            eval_metric=eval_metric,
+            )
+        if self.model_type == 'classification':
+            self.name: str = "XGBClassification"
+            self.objective: str = "binary:logistic" # or reg:logistic, multilabel not allowed
+            self.model_predict_func_name: str = 'predict_proba'
+        elif self.model_type == 'regression':
+            self.name = "XGBRegression"
+            self.objective = "reg:squarederror"
+            self.model_predict_func_name = 'predict'
+        
+        # model params
+        self.nthread: int = kwargs.pop('nthread', self.n_jobs)
+        self.seed: int = kwargs.pop('seed', self.random_state)
+        self.verbosity: int = kwargs.pop('verbosity', self.verbose)
+        self.verbosity = self.verbosity if self.verbosity >= 0 else 0
+        self.device: str = kwargs.pop('device', self.device_type).lower()
+        # other model params
+        self.num_boost_round: int = kwargs.pop('num_iterations', 2_000)
+        self.num_boost_round = kwargs.pop('num_boost_round', self.num_boost_round)
+        self.max_iterations: int = self.num_boost_round
+        self.early_stopping_rounds: int = kwargs.pop('early_stopping_rounds', 100)
+        # fit params
+        self.models: list[xgb.core.Booster] | None = None
+        self.class_weight = kwargs.pop('class_weight', 'balanced')
+        self.num_class: int | None = None
+        if isinstance(self.eval_metric, str):
+            self.eval_metric: Optional[str] = self.eval_metric.lower()
+        elif callable(self.eval_metric):
+            self.disable_default_eval_metric = 1
+        
+        self._not_inner_model_params += ['n_jobs', 'random_state', 'verbose', 'eval_metric', 'device_type',]
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+    
+    def _prepare(self, X: FeaturesType, y: TargetType | None = None, categorical_feature: Optional[List[str]] = None):
+        X, y = self._prepare_data(X, y, categorical_feature or [])
+        X.loc[:, self.categorical_feature] = X[self.categorical_feature].astype("category")
+        if y is not None:
+            if self.model_type == "classification":
+                self.num_class = np.unique(y).shape[0]
+                # correct objective based on the number of classes
+                if self.objective == 'binary:logistic' and self.num_class > 2:
+                    self.objective = "multi:softmax"
+            return X, y
         else:
-            self.kf = KFold(n_splits=5, random_state=self.random_state, shuffle=True)
+            return X
 
-    def fit(self, X: FeaturesType, y: TargetType, categorical_features=[]):
+    def fit_fold(
+        self, 
+        X_train: FeaturesType, y_train: TargetType,
+        X_test: FeaturesType, y_test: TargetType,
+        inner_params: dict[Any, Any] = {},
+        ):
+        # add class weights
+        # in binary case -> `scale_pos_weight`
+        # in multiclass case -> `sample_weight`
+        sample_weight = compute_sample_weight(
+            class_weight=None, y=y_train)
+        if self.model_type == "classification":
+            if self.class_weight == "balanced":
+                if self.num_class == 2:
+                    # binary case
+                    class_count = np.bincount(y_train.astype(int))
+                    self.scale_pos_weight = class_count[0] / class_count[1]
+                    inner_params["scale_pos_weight"] = self.scale_pos_weight
+                elif self.num_class and self.num_class > 2:
+                    # multiclass case
+                    sample_weight = compute_sample_weight(
+                        class_weight="balanced", y=y_train
+                        )
+        dtrain = xgb.DMatrix(
+            X_train, label=y_train, 
+            weight=sample_weight,
+            silent=True, nthread=self.nthread, enable_categorical=True,)
+        dtest = xgb.DMatrix(
+            X_test, label=y_test, 
+            silent=True, nthread=self.nthread, enable_categorical=True,)
+        
+        custom_metric = None
+        if callable(self.eval_metric):
+            custom_metric = self.eval_metric
+        fold_model = xgb.train(
+            params=inner_params, 
+            dtrain=dtrain, 
+            num_boost_round=self.num_boost_round,
+            evals=[(dtest, 'test',),], 
+            early_stopping_rounds=self.early_stopping_rounds, 
+            evals_result=None, 
+            verbose_eval=self.verbosity, 
+            callbacks=None, 
+            custom_metric=custom_metric,)
+        return fold_model, fold_model.best_score
+        
+    def fit(self, X: FeaturesType, y: TargetType, categorical_feature: Optional[List[str]] = None):
         log.info(f"Fitting {self.name}", msg_type="start")
 
-        self.categorical_features = categorical_features
+        X, y = self._prepare(X, y, categorical_feature or [])
+        kf = get_splitter(self.model_type, n_splits=self.n_splits, time_series=self.time_series, random_state=self.seed)
+        cv = kf.split(X, y)
 
-        X = deepcopy(convert_to_pandas(X))
-        X.loc[:, self.categorical_features] = X[self.categorical_features].astype(
-            "category"
-        )
-        y = convert_to_numpy(y)
-        y = y.reshape(y.shape[0])
-
-        cv = self.kf.split(X, y)
-
-        self.models = []
-        oof_preds = np.full(y.shape[0], fill_value=np.nan)
+        self.models = []            
+        oof_preds = get_epmty_array(y.shape[0], self.num_class)
         for i, (train_idx, test_idx) in enumerate(cv):
-            log.info(f"{self.name} fold {i}", msg_type="fit")
+            # log.info(f"{self.name} fold {i}", msg_type="fit")
+            X_train, y_train, X_test, y_test = self._get_train_test_data(X, y, train_idx, test_idx)
+            fold_model, _ = self.fit_fold(
+                X_train, y_train, 
+                X_test, y_test,
+                inner_params=self.inner_params)
 
-            fold_model = XGBReg(**self.params)
-
-            # fit/predict fold model
-            fold_model.fit(
-                X.iloc[train_idx],
-                y[train_idx],
-                eval_set=[(X.iloc[test_idx], y[test_idx])],
-                verbose=False,
-            )
-
-            oof_preds[test_idx] = fold_model.predict(X.iloc[test_idx])
-
-            # append fold model
-            self.models.append(fold_model)
-
-        log.info(f"Fitting {self.name}", msg_type="end")
-        return oof_preds
-
-    @staticmethod
-    def get_trial_params(trial):
-        param_distr = {
-            "max_depth": trial.suggest_int("max_depth", 1, 16),
-            "grow_policy": trial.suggest_categorical(
-                "grow_policy", ["depthwise", "lossguide"]
-            ),
-            "max_leaves": trial.suggest_int("max_leaves", 10, 512),
-            "gamma": trial.suggest_float("gamma", 0, 20),
-            "subsample": trial.suggest_float("subsample", 0.1, 1),
-            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.1, 1),
-            "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.1, 1),
-            "reg_lambda": trial.suggest_float("reg_lambda", 0, 10),
-            "reg_alpha": trial.suggest_float("reg_alpha", 0, 10),
-            "min_child_weight": trial.suggest_int("min_child_weight", 0, 20),
-        }
-
-        return param_distr
-
-    def get_not_tuned_params(self):
-        not_tuned_params = {
-            "objective": self.objective_type,
-            "learning_rate": self.learning_rate,
-            "n_estimators": 2000,
-            "verbosity": self.verbosity,
-            "early_stopping_rounds": self.early_stopping_rounds,
-            "enable_categorical": self.enable_categorical,
-            "max_cat_to_onehot": self.max_cat_to_onehot,
-            "n_jobs": self.n_jobs,
-            "random_state": self.random_state,
-        }
-        return not_tuned_params
-
-    def objective(self, trial, X, y, scorer):
-        """
-        Perform cross-validation to evaluate the model.
-        Mean test score is returned.
-        """
-        cv = self.kf.split(X, y)
-
-        trial_params = self.get_trial_params(trial)
-        not_tuned_params = self.get_not_tuned_params()
-
-        cv_metrics = []
-        best_num_iterations = []
-        for train_idx, test_idx in cv:
-
-            model = XGBReg(**trial_params, **not_tuned_params)
-            model.fit(
-                X.iloc[train_idx],
-                y[train_idx],
-                eval_set=[(X.iloc[test_idx], y[test_idx])],
-                verbose=False,
-            )
-            y_pred = model.predict(X.iloc[test_idx])
-
-            cv_metrics.append(scorer.score(y[test_idx], y_pred))
-            best_num_iterations.append(model.best_iteration)
-
-        # add `n_estimators` to the optuna parameters
-        trial.set_user_attr("n_estimators", round(np.mean(best_num_iterations)))
-
-        return np.mean(cv_metrics)
-
-    def tune(
-        self,
-        X: FeaturesType,
-        y: TargetType,
-        scorer=None,
-        timeout=60,
-        categorical_features=[],
-    ):
-        log.info(f"Tuning {self.name}", msg_type="start")
-
-        self.categorical_features = categorical_features
-
-        X = deepcopy(convert_to_pandas(X))
-        X.loc[:, self.categorical_features] = X[self.categorical_features].astype(
-            "category"
-        )
-        y = convert_to_numpy(y)
-        y = y.reshape(y.shape[0])
-
-        study = optuna_tune(
-            self.name,
-            self.objective,
-            X=X,
-            y=y,
-            metric=metric,
-            timeout=timeout,
-            random_state=self.random_state,
-        )
-
-        # set best parameters
-        for key, val in study.best_params.items():
-            setattr(self, key, val)
-        self.n_estimators = study.best_trial.user_attrs["n_estimators"]
-
-        log.info(f"{len(study.trials)} trials completed", msg_type="optuna")
-        log.info(f"{self.params}", msg_type="best_params")
-        log.info(f"Tuning {self.name}", msg_type="end")
-
-    def _predict(self, X_test):
-        """Predict on one dataset. Average all fold models"""
-        X_test = deepcopy(convert_to_pandas(X_test))
-        X_test.loc[:, self.categorical_features] = X_test[
-            self.categorical_features
-        ].astype("category")
-
-        y_pred = np.zeros(X_test.shape[0])
-        for fold_model in self.models:
-            y_pred += fold_model.predict(X_test)
-
-        y_pred = y_pred / len(self.models)
-        return y_pred
-
-    @property
-    def params(self):
-        return {
-            **self.get_not_tuned_params(),
-            "max_depth": self.max_depth,
-            "max_leaves": self.max_leaves,
-            "grow_policy": self.grow_policy,
-            "gamma": self.gamma,
-            "min_child_weight": self.min_child_weight,
-            "subsample": self.subsample,
-            "colsample_bytree": self.colsample_bytree,
-            "colsample_bylevel": self.colsample_bylevel,
-            "reg_lambda": self.reg_lambda,
-            "reg_alpha": self.reg_alpha,
-        }
-
-
-class XGBClassification(BaseModel):
-    def __init__(
-        self,
-        objective="binary:logistic",
-        n_estimators=2000,
-        learning_rate=0.03,
-        max_leaves=None,
-        max_depth=None,
-        grow_policy="lossguide",
-        gamma=0,
-        min_child_weight=1,
-        subsample=1,
-        colsample_bytree=1,
-        colsample_bylevel=1,
-        reg_lambda=1,
-        reg_alpha=0,
-        early_stopping_rounds=100,
-        enable_categorical=True,
-        max_cat_to_onehot=5,
-        n_jobs=6,
-        random_state=42,
-        verbosity=0,
-        class_weight=None,
-        time_series=False,
-        eval_metric=None,
-        device=None,
-    ):
-
-        self.name = "XGBClassification"
-
-        self.categorical_features = []
-        self.enable_categorical = enable_categorical
-        self.max_cat_to_onehot = max_cat_to_onehot
-
-        self.objective_type = objective
-        self.n_estimators = n_estimators
-        self.learning_rate = learning_rate
-        self.max_depth = max_depth
-        self.max_leaves = max_leaves
-        self.grow_policy = grow_policy
-        self.gamma = gamma
-        self.min_child_weight = min_child_weight
-        self.subsample = subsample
-        self.colsample_bytree = colsample_bytree
-        self.colsample_bylevel = colsample_bylevel
-        self.reg_lambda = reg_lambda
-        self.reg_alpha = reg_alpha
-        self.class_weight = class_weight
-
-        self.n_jobs = n_jobs
-        self.random_state = random_state
-        self.verbosity = verbosity
-        self.early_stopping_rounds = early_stopping_rounds
-        self.time_series = time_series
-        self.eval_metric = eval_metric
-        self.device = device
-
-        if self.device is None and torch.cuda.is_available():
-            self.device = "cuda"
-        else:
-            self.device = "cpu"
-
-        if self.time_series:
-            self.kf = TimeSeriesSplit(n_splits=5)
-        else:
-            self.kf = StratifiedKFold(
-                n_splits=5, random_state=self.random_state, shuffle=True
-            )
-
-        # self.models = None
-        # self.oof_preds = None
-
-    def fit(self, X: FeaturesType, y: TargetType, categorical_features=[]):
-        log.info(f"Fitting {self.name}", msg_type="start")
-
-        self.categorical_features = categorical_features
-
-        X = deepcopy(convert_to_pandas(X))
-        X.loc[:, self.categorical_features] = X[self.categorical_features].astype(
-            "category"
-        )
-        y = convert_to_numpy(y)
-        y = y.reshape(y.shape[0])
-        self.n_classes = np.unique(y).shape[0]
-
-        # correct `objective_type` based on the number of classes
-        if self.n_classes > 2:
-            self.objective_type = "multi:softmax"
-
-        cv = self.kf.split(X, y)
-
-        self.models = []
-        oof_preds = np.full((y.shape[0], self.n_classes), fill_value=np.nan)
-        for i, (train_idx, test_idx) in enumerate(cv):
-            log.info(f"{self.name} fold {i}", msg_type="fit")
-
-            inner_params = self.inner_params
-
-            sample_weight = compute_sample_weight(class_weight=None, y=y[train_idx])
-
-            # add class weights
-            # in binary case -> `scale_pos_weight`
-            # in multiclass case -> `sample_weight`
-            if self.n_classes == 2 and self.class_weight == "balanced":
-                # binary case
-                class_count = np.bincount(y[train_idx].astype(int))
-                inner_params["scale_pos_weight"] = class_count[0] / class_count[1]
-            elif self.n_classes > 2 and self.class_weight == "balanced":
-                # multiclass case
-                sample_weight = compute_sample_weight(
-                    class_weight="balanced", y=y[train_idx]
+            dtest = xgb.DMatrix(
+                X_test, 
+                silent=True, 
+                nthread=self.nthread, 
+                enable_categorical=True,
                 )
-            fold_model = XGBClass(**inner_params, eval_metric=self.eval_metric)
-
-            # fit/predict fold model
-            fold_model.fit(
-                X.iloc[train_idx],
-                y[train_idx],
-                eval_set=[(X.iloc[test_idx], y[test_idx])],
-                verbose=False,
-                sample_weight=sample_weight,
-            )
-
-            oof_preds[test_idx] = fold_model.predict_proba(X.iloc[test_idx])
-
-            # append fold model
+            preds = fold_model.predict(dtest)
+            if self.model_type == "classification" and preds.ndim == 1:
+                preds = np.vstack((1 - preds, preds)).T
+            print(preds.shape, oof_preds.shape)
+            oof_preds[test_idx] = preds
             self.models.append(fold_model)
 
         log.info(f"Fitting {self.name}", msg_type="end")
         return oof_preds
 
     @staticmethod
-    def get_trial_params(trial):
-        param_distr = {
+    def get_base_trial_params(trial):
+        default_param_distr = {
             "max_depth": trial.suggest_int("max_depth", 1, 16),
             "grow_policy": trial.suggest_categorical(
                 "grow_policy", ["depthwise", "lossguide"]
@@ -387,191 +176,203 @@ class XGBClassification(BaseModel):
             "reg_lambda": trial.suggest_float("reg_lambda", 0, 10),
             "reg_alpha": trial.suggest_float("reg_alpha", 0, 10),
             "min_child_weight": trial.suggest_int("min_child_weight", 0, 20),
-            "class_weight": trial.suggest_categorical(
-                "class_weight", [None, "balanced"]
-            ),
         }
 
-        return param_distr
+        return default_param_distr
 
-    def objective(self, trial, X, y, scorer):
+    def optuna_objective(self, trial, X: FeaturesType, y: TargetType):
         """
         Perform cross-validation to evaluate the model.
         Mean test score is returned.
         """
-        cv = self.kf.split(X, y)
+        kf = get_splitter(self.model_type, n_splits=self.n_splits, time_series=self.time_series, random_state=self.seed)
+        cv = kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
         not_tuned_params = self.not_tuned_params
-
-        class_weight = trial_params.pop("class_weight")
-
-        oof_preds = np.full((y.shape[0], self.n_classes), fill_value=np.nan)
+        not_tuned_params['num_boost_round'] = self.max_iterations
+        inner_params = {**not_tuned_params, **trial_params, }
+        
+        # oof_preds = get_epmty_array(y.shape[0], None if self.num_class == 2 else self.num_class)
         best_num_iterations = []
-        models = []
-        for train_idx, test_idx in cv:
-            sample_weight = compute_sample_weight(class_weight=None, y=y[train_idx])
+        scores = []
+        for i, (train_idx, test_idx) in enumerate(cv):
+            # log.info(f"{self.name} fold {i}", msg_type="fit")
+            X_train, y_train, X_test, y_test = self._get_train_test_data(X, y, train_idx, test_idx)
+            fold_model, score = self.fit_fold(
+                X_train, y_train, 
+                X_test, y_test,
+                inner_params=inner_params)
 
-            # add class weights
-            # in binary case -> `scale_pos_weight`
-            # in multiclass case -> `sample_weight`
-            if self.n_classes == 2 and class_weight == "balanced":
-                # binary case
-                class_count = np.bincount(y[train_idx].astype(int))
-                not_tuned_params["scale_pos_weight"] = class_count[0] / class_count[1]
-            elif self.n_classes > 2 and class_weight == "balanced":
-                # multiclass case
-                sample_weight = compute_sample_weight(
-                    class_weight="balanced", y=y[train_idx]
-                )
-
-            model = XGBClass(
-                **trial_params, **not_tuned_params, eval_metric=self.eval_metric
-            )
-            model.fit(
-                X.iloc[train_idx],
-                y[train_idx],
-                eval_set=[(X.iloc[test_idx], y[test_idx])],
-                verbose=False,
-                sample_weight=sample_weight,
-            )
-
-            oof_preds[test_idx] = model.predict_proba(X.iloc[test_idx])
-            best_num_iterations.append(model.best_iteration)
-            models.append(model)
-
+            # dtest = xgb.DMatrix(
+            #     X_test, 
+            #     silent=True, 
+            #     nthread=self.nthread, 
+            #     enable_categorical=True,)
+            scores.append(score)
+            # oof_preds[test_idx] = fold_model.predict(dtest)
+            if self.early_stopping_rounds >= 0:
+                best_num_iterations.append(fold_model.best_iteration)
+            else:
+                best_num_iterations.append(self.num_boost_round)
         # add `n_estimators` to the optuna parameters
-        trial.set_user_attr("n_estimators", round(np.mean(best_num_iterations)))
-
+        trial.set_user_attr("num_boost_round", round(np.mean(best_num_iterations)))
+        return np.mean(scores)
         # remove possible Nones in oof
-        not_none_oof = np.where(np.logical_not(np.isnan(oof_preds[:, 0])))[0]
+        # if oof_preds.ndim == 1:
+        #     not_none_oof = ~np.isnan(oof_preds).any(axis=1)
+        # else:
+        #     not_none_oof = ~np.isnan(oof_preds)
+            
+        # if oof_preds.ndim == 2 and oof_preds.shape[1] == 2:
+        #     # binary case
+        #     trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof, 1])
+        # else:
+        #     trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof])
 
-        if oof_preds.ndim == 2 and oof_preds.shape[1] == 2:
-            # binary case
-            trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof, 1])
-        else:
-            trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof])
-
-        # if self.models is None:
-        #     # no trials are completed yet
-        #     # save tuned models
-        #     self.models = models
-        #     self.oof_preds = oof_preds
-
-        # elif (trial_metric <= trial.study.best_value and trial.study.direction == 1) or (
-        #     trial_metric >= trial.study.best_value and trial.study.direction == 2
-        #     ):
-
-        #     # new best
-        #     # save tuned models
-        #     self.models = models
-        #     self.oof_preds = oof_preds
-
-        return trial_metric
+        # return trial_metric
 
     def tune(
         self,
         X: FeaturesType,
         y: TargetType,
-        scorer=None,
-        timeout=60,
-        categorical_features=[],
+        timeout: int=60,
+        categorical_feature: Optional[List[str]] = None,
     ):
         log.info(f"Tuning {self.name}", msg_type="start")
 
-        self.categorical_features = categorical_features
-        self.eval_metric = get_eval_metric(scorer)
-
-        X = deepcopy(convert_to_pandas(X))
-        X.loc[:, self.categorical_features] = X[self.categorical_features].astype(
-            "category"
-        )
-        y = convert_to_numpy(y)
-        y = y.reshape(y.shape[0])
-        self.n_classes = np.unique(y).shape[0]
-
-        # correct `objective_type` based on the number of classes
-        if self.n_classes > 2:
-            self.objective_type = "multi:softmax"
-
+        from .metrics import METRICS_GREATER_IS_BETTER
+            
+        if isinstance(self.eval_metric, str):
+            greater_is_better = self.get_str_greater_is_better(
+                self.model_type, 
+                self.eval_metric, 
+                METRICS_GREATER_IS_BETTER)
+        elif self.eval_metric is not None:
+            _, _, greater_is_better = self.eval_metric()
+        else:
+            greater_is_better = None
+        
+        X, y = self._prepare(X, y, categorical_feature or [])
         study = tune_optuna(
             self.name,
-            self.objective,
-            X=X,
-            y=y,
-            scorer=scorer,
+            self.optuna_objective,
+            X=X, y=y,
+            greater_is_better=greater_is_better,
             timeout=timeout,
-            random_state=self.random_state,
+            random_state=self.seed,
         )
-
-        # set best parameters
-        for key, val in study.best_params.items():
-            setattr(self, key, val)
-        self.n_estimators = study.best_trial.user_attrs["n_estimators"]
-
+        self.best_params = study.best_params
+        self.best_params['num_boost_round'] = study.best_trial.user_attrs["num_boost_round"]
+        
         log.info(f"{len(study.trials)} trials completed", msg_type="optuna")
         log.info(f"{self.params}", msg_type="best_params")
         log.info(f"Tuning {self.name}", msg_type="end")
 
-    def _predict(self, X_test):
+    def _predict(self, X):
         """Predict on one dataset. Average all fold models"""
-        X_test = deepcopy(convert_to_pandas(X_test))
-        X_test.loc[:, self.categorical_features] = X_test[
-            self.categorical_features
-        ].astype("category")
-
-        y_pred = np.zeros((X_test.shape[0], self.n_classes))
+        X = self._prepare(X, categorical_feature=self.categorical_feature)
+        y_pred = np.zeros((X.shape[0], self.num_class)) if self.num_class and self.num_class > 2 \
+            else np.zeros((X.shape[0],))
+        
+        dtest = xgb.DMatrix(
+                X, 
+                silent=True, 
+                nthread=self.nthread, 
+                enable_categorical=True,
+                )
+        
         for fold_model in self.models:
-            y_pred += fold_model.predict_proba(X_test)
-
+            y_pred += fold_model.predict(dtest)
         y_pred = y_pred / len(self.models)
+        
+        if self.model_type == "classification" and y_pred.ndim == 1:
+            y_pred = np.vstack((1 - y_pred, y_pred)).T
         return y_pred
 
     @property
-    def not_tuned_params(self):
-        return {
-            "n_estimators": self.n_estimators,
-            "learning_rate": self.learning_rate,
+    def not_tuned_params(self) -> dict:
+        not_tuned_params = {
+            "nthread": self.nthread,
+            "seed": self.seed,
             "verbosity": self.verbosity,
-            "early_stopping_rounds": self.early_stopping_rounds,
-            "enable_categorical": self.enable_categorical,
-            "max_cat_to_onehot": self.max_cat_to_onehot,
-            "n_jobs": self.n_jobs,
-            "random_state": self.random_state,
             "device": self.device,
+            'objective': self.objective,
+            'eval_metric': self.eval_metric,
         }
+        return {key: value for key, value in not_tuned_params.items() if value}
 
     @property
-    def inner_params(self):
+    def inner_params(self) -> dict:
         return {
-            "max_depth": self.max_depth,
-            "max_leaves": self.max_leaves,
-            "grow_policy": self.grow_policy,
-            "gamma": self.gamma,
-            "min_child_weight": self.min_child_weight,
-            "subsample": self.subsample,
-            "colsample_bytree": self.colsample_bytree,
-            "colsample_bylevel": self.colsample_bylevel,
-            "reg_lambda": self.reg_lambda,
-            "reg_alpha": self.reg_alpha,
-            "class_weight": self.class_weight,
             **self.not_tuned_params,
+            **{key: value for key, value in self.__dict__.items() if key not in self._not_inner_model_params},
+            **self.best_params,
         }
 
-    @property
-    def meta_params(self):
-        return {
-            "eval_metric": (
-                self.eval_metric
-                if isinstance(self.eval_metric, str) or self.eval_metric is None
-                else "custom_metric"
-            ),
-            "time_series": self.time_series,
-        }
+ 
+class XGBClassification(XGBBase):
+    def __init__(
+        self,
+        random_state: int = 42,
+        time_series: bool = False,
+        verbose: int = 0,
+        device_type: str | None = None,
+        n_jobs: int = None,
+        n_splits: int = 5,
+        eval_metric: Optional[str | Callable] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            model_type="classification",
+            random_state=random_state,
+            time_series=time_series,
+            verbose=verbose,
+            device_type=device_type,
+            n_jobs=n_jobs,
+            n_splits=n_splits,
+            eval_metric=eval_metric,
+            **kwargs,
+        )
+    
+    @staticmethod   
+    def get_trial_params(trial):
+        params = XGBBase.get_base_trial_params(trial)
+        params["class_weight"] = trial.suggest_categorical("class_weight", [None, "balanced"])
+        return params
 
-    @property
-    def params(self):
-        return {
-            **self.inner_params,
-            **self.meta_params,
-        }
+
+class XGBRegression(XGBBase):
+    def __init__(
+        self,
+        random_state: int = 42,
+        time_series: bool = False,
+        verbose: int = 0,
+        device_type: str | None = None,
+        n_jobs: int = None,
+        n_splits: int = 5,
+        eval_metric: Optional[str | Callable] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            model_type="regression",
+            random_state=random_state,
+            time_series=time_series,
+            verbose=verbose,
+            device_type=device_type,
+            n_jobs=n_jobs,
+            n_splits=n_splits,
+            eval_metric=eval_metric,
+            **kwargs,
+        )
+    
+    @staticmethod
+    def get_trial_params(trial):
+        params = XGBBase.get_base_trial_params(trial)
+        # params.update({
+        #     "objective": trial.suggest_categorical(
+        #         "objective", ["regression", "regression_l1", "huber"]
+        #     ),
+        # })
+
+        return params

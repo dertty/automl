@@ -49,7 +49,7 @@ class OptunaBlender(BaseModel):
                 n_splits=5, random_state=self.random_state, shuffle=True
             )
 
-    def fit(self, X, y, categorical_features=None):
+    def fit(self, X, y, categorical_feature=None):
         return self._predict(X)
 
     @staticmethod
@@ -89,7 +89,7 @@ class OptunaBlender(BaseModel):
     def _compute_weighted_pred(x, weights):
         return np.sum(x * weights.reshape(-1, 1, 1), axis=0)
 
-    def tune(self, X, y, scorer, timeout=60, categorical_features=[]):
+    def tune(self, X, y, scorer, timeout=60, categorical_feature=[]):
         log.info(f"Tuning {self.name}", msg_type="start")
 
         X = convert_to_numpy(X)
@@ -203,6 +203,7 @@ class CoordDescBlender(BaseModel):
         random_state=42,
         drop_thresh=1e-1,
         time_series=False,
+        scorer=None,
     ):
         """Blender inspired by LightAutoML.
         https://github.com/sb-ai-lab/LightAutoML/blob/master/lightautoml/automl/blend.py
@@ -217,8 +218,10 @@ class CoordDescBlender(BaseModel):
         self.random_state = random_state
 
         self.drop_thresh = drop_thresh
+        self.scorer = scorer
+        self.models = 'None'
 
-    def fit(self, X, y, categorical_features=None):
+    def fit(self, X, y, categorical_feature=None):
         return self._predict(X)
 
     @staticmethod
@@ -241,7 +244,7 @@ class CoordDescBlender(BaseModel):
 
         return weights
 
-    def _objective(self, weight, weights, X, y, scorer, idx):
+    def _objective(self, weight, weights, X, y, idx):
 
         weights = deepcopy(weights)
         weights[idx] = weight
@@ -255,14 +258,14 @@ class CoordDescBlender(BaseModel):
             # binary case
             y_pred = y_pred[:, 1]
 
-        metric = scorer.score(y, y_pred)
-        return -1 * metric if scorer.greater_is_better else metric
+        metric = self.scorer.score(y, y_pred)
+        return -1 * metric if self.scorer.greater_is_better else metric
 
     @staticmethod
     def _compute_weighted_pred(x, weights):
         return np.sum(x * weights.reshape(-1, 1, 1), axis=0)
 
-    def tune(self, X, y, scorer, timeout=60, categorical_features=[]):
+    def tune(self, X, y, timeout=60, categorical_feature=[]):
         log.info(f"Tuning {self.name}", msg_type="start")
 
         X = convert_to_numpy(X)
@@ -293,20 +296,20 @@ class CoordDescBlender(BaseModel):
                     # self._get_scorer(splitted_preds, weights_idx, candidate),
                     method="Bounded",
                     bounds=(0, 1),
-                    args=(weights, X, y, scorer, idx),
+                    args=(weights, X, y, idx),
                     options={"disp": False, "maxiter": self.n_inner_iters},
                 )
 
                 weights[idx] = opt_res.x
                 weights = self.adjust_weights(weights, idx, self.drop_thresh)
 
-                score = -1 * opt_res.fun if scorer.greater_is_better else opt_res.fun
+                score = -1 * opt_res.fun if self.scorer.greater_is_better else opt_res.fun
 
                 if i == 0 and idx == 0:
                     best_score = score
                     best_weights = weights
 
-                elif scorer.is_better(score, best_score):
+                elif self.scorer.is_better(score, best_score):
                     best_score = score
                     best_weights = deepcopy(weights)
                     flg_no_upd = False

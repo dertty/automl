@@ -1,365 +1,210 @@
 import lightgbm as lgb
 import numpy as np
-from sklearn.model_selection import KFold, StratifiedKFold, TimeSeriesSplit
 
+from typing import Any, Optional, List, Dict, Callable
 from ...loggers import get_logger
 from ..base_model import BaseModel
 from ..type_hints import FeaturesType, TargetType
-from ..utils import convert_to_numpy, convert_to_pandas, tune_optuna
-from .metrics import get_eval_metric
+from ..utils import tune_optuna
+from ..utils.model_utils import get_splitter, get_epmty_array
+
 
 log = get_logger(__name__)
 
 
-class LightGBMRegression(BaseModel):
+class LightGBMBase(BaseModel):
     def __init__(
         self,
-        objective_type="regression",
-        boosting="gbdt",
-        num_iterations=100,
-        learning_rate=0.03,
-        max_depth=-1,
-        num_leaves=31,
-        min_data_in_leaf=20,
-        bagging_fraction=1,
-        bagging_freq=0,
-        feature_fraction=1,
-        early_stopping_round=100,
-        lambda_l1=0,
-        lambda_l2=0,
-        min_gain_to_split=0,
-        n_jobs=6,
-        random_state=42,
-        time_series=False,
+        model_type: str,
+        random_state: int = 42,
+        time_series: bool = False,
+        verbose: int = -1,
+        device_type: Optional[str] = None,
+        n_jobs: Optional[int] = None,
+        n_splits: int = 5,
+        eval_metric: Optional[str | Callable] = None,
+        **kwargs,
     ):
+        super().__init__(
+            model_type=model_type,
+            random_state=random_state,
+            time_series=time_series,
+            verbose=verbose,
+            device_type=device_type,
+            n_jobs=n_jobs,
+            n_splits=n_splits,
+            eval_metric=eval_metric,
+            )
+        if self.model_type == 'classification':
+            self.name: str = "LightGBMClassification"
+            self.objective: str = "binary" # or multiclass, multilabel not allowed
+        elif self.model_type == 'regression':
+            self.name = "LightGBMRegression"
+            self.objective = "regression"
 
-        self.name = "LightGBMRegression"
-
-        self.categorical_feature = []
-
-        self.objective_type = objective_type
-        self.boosting = boosting
-        self.num_iterations = num_iterations
-        self.max_depth = max_depth
-        self.learning_rate = learning_rate
-        self.min_data_in_leaf = min_data_in_leaf
-        self.bagging_fraction = bagging_fraction
-        self.bagging_freq = bagging_freq
-        self.feature_fraction = feature_fraction
-        self.early_stopping_round = early_stopping_round
-        self.lambda_l1 = lambda_l1
-        self.lambda_l2 = lambda_l2
-        self.min_gain_to_split = min_gain_to_split
-        self.num_leaves = num_leaves
-
-        self.num_threads = n_jobs
-        self.random_state = random_state
-        self.verbose = -1
-        self.time_series = time_series
-
-        if self.time_series:
-            self.kf = TimeSeriesSplit(n_splits=5)
+        # Так как в модель передаются все атрибуты класса,
+        # то все атрибуты класса должны соответствовать параметрам модели
+        # лишнее либо удаляем, либо добавляем в исключения
+        # model params
+        self.num_threads: int = kwargs.pop('num_threads', self.n_jobs)
+        self.seed: int = kwargs.pop('seed', self.random_state)
+        self.verbosity: int = kwargs.pop('verbosity', self.verbose)
+        self.device_type: str = self.device_type.lower()
+        # other model params
+        num_iterations_aliases = [
+            'iterations', 'num_iteration', 'n_iter', 'num_tree', 
+            'num_trees', 'num_round', 'num_rounds', 'nrounds', 
+            'num_boost_round', 'n_estimators', 'max_iter']
+        num_iterations, kwargs = self._get_param_value(kwargs, num_iterations_aliases, 2_000)
+        self.num_iterations: Optional[int] = num_iterations
+        self.max_iterations: Optional[int] = num_iterations
+        early_stopping_round_aliases = [
+            'early_stopping_round', 'early_stopping_rounds', 
+            'early_stopping', 'n_iter_no_change',]
+        early_stopping_round, kwargs = self._get_param_value(kwargs, early_stopping_round_aliases, 100)
+        self.early_stopping_round: Optional[int] = early_stopping_round
+        self.early_stopping_min_delta = kwargs.pop('early_stopping_min_delta', 1e-4)
+        if ('scale_pos_weight' in kwargs or 'class_weight' in kwargs) and 'is_unbalance' in kwargs:
+            raise ValueError("You can't use both `class_weight` or `scale_pos_weight` and `is_unbalance`")
+        elif 'scale_pos_weight' in kwargs or 'class_weight' in kwargs:
+            self.scale_pos_weight: float = kwargs.pop('class_weight', None) or kwargs.pop('scale_pos_weight', 1.0)
+        elif 'is_unbalance' in kwargs:
+            self.is_unbalance: str = kwargs.pop('is_unbalance')
+        # fit params
+         
+        self.num_class: Optional[int] = None
+        if isinstance(self.eval_metric, str):
+            self.metric: Optional[str] = self.eval_metric
+        elif callable(self.eval_metric):
+            self.metric = 'None'
         else:
-            self.kf = KFold(n_splits=5, random_state=self.random_state, shuffle=True)
+            self.metric = ''
+        
+        self._not_inner_model_params += ['n_jobs', 'random_state', 'verbose', 'eval_metric']
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
-    def fit(self, X: FeaturesType, y: TargetType, categorical_features=[]):
+    @staticmethod
+    def _get_param_value(kwargs: Dict[str, Any], keys: List[str], default_value: Any):
+        # Перебираем все возможные варианты и удаляем из kwargs
+        result = None
+        for key in keys:
+            value = kwargs.pop(key, None)
+            if value:
+                result = result or value
+        result = result or default_value
+        return result, kwargs
+        
+    def _prepare(self, X: FeaturesType, y: Optional[TargetType] = None, categorical_feature: Optional[list[str]] = None):
+        X, y = self._prepare_data(X, y, categorical_feature)
+        if y is not None:
+            if self.model_type == "classification":
+                self.num_class = np.unique(y).shape[0]
+                # correct objective based on the number of classes
+                if self.objective == 'binary' and self.num_class > 2:
+                    self.objective = "multiclass"
+            return X, y
+        else:
+            return X
+
+    @staticmethod
+    def _fix_params_name(params: dict):
+        """
+        Fix parameter names to avoid LightGBM alias warnings.
+
+        LightGBM produces warnings when using certain parameter aliases.
+        This method renames the input parameters to their canonical names
+        to avoid these warnings. In recent versions of LightGBM, this issue
+        has been resolved, but this method ensures compatibility with older versions.
+
+        Args:
+            params (dict): Dictionary of parameters to be fixed.
+
+        Returns:
+            dict: Dictionary with fixed parameter names.
+        """
+        params_upd = {**params}
+        params_upd["colsample_bytree"] = params_upd.get("colsample_bytree") or params_upd.pop("feature_fraction", None)
+        params_upd["reg_alpha"] = params_upd.get("reg_alpha") or params_upd.pop("lambda_l1", None)
+        params_upd["subsample"] = params_upd.get("subsample") or params_upd.pop("bagging_fraction", None)
+        params_upd["min_child_samples"] = params_upd.get("min_child_samples") or params_upd.pop("min_data_in_leaf", None)
+        params_upd["min_split_gain"] = params_upd.get("min_split_gain") or params_upd.pop("min_gain_to_split", None)
+        params_upd["subsample_freq"] = params_upd.get("subsample_freq") or params_upd.pop("bagging_freq", None)
+        params_upd["reg_lambda"] = params_upd.get("reg_lambda") or params_upd.pop("lambda_l2", None)
+        params_upd["boosting_type"] = params_upd.pop("boosting", None)
+        return {key:  value for key, value in params_upd.items() if value}
+
+    def fit_fold(
+        self, 
+        X_train: FeaturesType, y_train: TargetType,
+        X_test: FeaturesType, y_test: TargetType,
+        inner_params: Dict[Any, Any] = {}
+        ):
+        train_data = lgb.Dataset(
+            X_train,
+            y_train,
+            categorical_feature=self.categorical_feature,
+        )
+        test_data = lgb.Dataset(
+            X_test,
+            y_test,
+            categorical_feature=self.categorical_feature,
+        )
+        feval = None
+        if self.metric == 'None':
+            feval = self.eval_metric
+        # fit/predict fold model
+        fold_model = lgb.train(
+            params=inner_params,
+            train_set=train_data,
+            valid_sets=[test_data],
+            valid_names=['test_data'], 
+            feval = feval,
+            # num_boost_round=self.num_iterations,
+            callbacks=[
+                lgb.early_stopping(
+                    self.early_stopping_round or -1, 
+                    first_metric_only=False, 
+                    verbose=self.verbosity > 0, 
+                    min_delta=self.early_stopping_min_delta
+                    )
+                ],
+            )
+        best_score_dict: Dict[str, float] = fold_model.best_score['test_data']
+        for _, value in best_score_dict.items():
+            best_score: float = value
+        return fold_model, best_score
+    
+    def fit(self, X: FeaturesType, y: TargetType, categorical_feature: Optional[list[str]] = None):
         log.info(f"Fitting {self.name}", msg_type="start")
 
-        self.categorical_feature = categorical_features
-
-        X = convert_to_pandas(X)
-        y = convert_to_numpy(y)
-        y = y.reshape(y.shape[0])
-
-        cv = self.kf.split(X, y)
-
+        X, y = self._prepare(X, y, categorical_feature or [])
+        kf = get_splitter(self.model_type, n_splits=self.n_splits, time_series=self.time_series, random_state=self.seed)
+        cv = kf.split(X, y)
+        
         self.models = []
-        oof_preds = np.full(y.shape[0], fill_value=np.nan)
+        oof_preds = get_epmty_array(y.shape[0], self.num_class)
         for i, (train_idx, test_idx) in enumerate(cv):
-            log.info(f"{self.name} fold {i}", msg_type="fit")
+            # log.info(f"{self.name} fold {i}", msg_type="fit")
 
-            train_data = lgb.Dataset(
-                X.iloc[train_idx],
-                y[train_idx],
-                categorical_feature=self.categorical_feature,
-            )
-            test_data = lgb.Dataset(
-                X.iloc[test_idx],
-                y[test_idx],
-                categorical_feature=self.categorical_feature,
-            )
-
-            # fit/predict fold model
-            fold_model = lgb.train(
-                params=self.params,
-                train_set=train_data,
-                valid_sets=[test_data],
-                verbose_eval=False,
-            )
-            oof_preds[test_idx] = fold_model.predict(X.iloc[test_idx])
-
-            # append fold model
+            X_train, y_train, X_test, y_test = self._get_train_test_data(X, y, train_idx, test_idx)
+            fold_model, _ = self.fit_fold(
+                X_train, y_train, 
+                X_test, y_test,
+                inner_params=self._fix_params_name(self.inner_params))
+            
+            preds = fold_model.predict(X_test)
+            if self.model_type == "classification" and preds.ndim == 1:
+                preds = np.vstack((1 - preds, preds)).T
+            oof_preds[test_idx] = preds
             self.models.append(fold_model)
 
         log.info(f"Fitting {self.name}", msg_type="end")
         return oof_preds
 
     @staticmethod
-    def get_trial_params(trial):
-        param_distr = {
-            "objective_type": trial.suggest_categorical(
-                "objective_type", ["regression", "regression_l1", "huber"]
-            ),
-            "max_depth": trial.suggest_int("max_depth", 1, 16),
-            "num_leaves": trial.suggest_int("num_leaves", 10, 512),
-            "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 1, 256),
-            "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 1),
-            "bagging_freq": trial.suggest_int("bagging_freq", 0, 20, step=10),
-            "feature_fraction": trial.suggest_float("feature_fraction", 0.4, 1),
-            "lambda_l1": trial.suggest_float("lambda_l1", 0, 10),
-            "lambda_l2": trial.suggest_float("lambda_l2", 0, 10),
-            "min_gain_to_split": trial.suggest_float("min_gain_to_split", 0, 20),
-        }
-
-        return param_distr
-
-    def get_not_tuned_params(self):
-        not_tuned_params = {
-            "boosting": "gbdt",
-            "learning_rate": self.learning_rate,
-            "num_iterations": 2000,
-            "verbose": self.verbose,
-            "early_stopping_round": self.early_stopping_round,
-            "num_threads": self.num_threads,
-            "random_state": self.random_state,
-        }
-        return not_tuned_params
-
-    def objective(self, trial, X, y, scorer):
-        """
-        Perform cross-validation to evaluate the model.
-        Mean test score is returned.
-        """
-        cv = self.kf.split(X, y)
-
-        trial_params = self.get_trial_params(trial)
-        not_tuned_params = self.get_not_tuned_params()
-
-        oof_preds = np.full(y.shape[0], fill_value=np.nan)
-        best_num_iterations = []
-        for train_idx, test_idx in cv:
-
-            train_data = lgb.Dataset(
-                X.iloc[train_idx],
-                y[train_idx],
-                categorical_feature=self.categorical_feature,
-            )
-            test_data = lgb.Dataset(
-                X.iloc[test_idx],
-                y[test_idx],
-                categorical_feature=self.categorical_feature,
-            )
-
-            model = lgb.train(
-                params={**trial_params, **not_tuned_params},
-                train_set=train_data,
-                valid_sets=[test_data],
-                verbose_eval=False,
-            )
-            y_pred = model.predict(X.iloc[test_idx])
-
-            cv_metrics.append(scorer.score(y[test_idx], y_pred))
-            best_num_iterations.append(model.best_iteration)
-
-        # add `num_iterations` to the optuna parameters
-        trial.set_user_attr("num_iterations", round(np.mean(best_num_iterations)))
-
-        return np.mean(cv_metrics)
-
-    def tune(
-        self,
-        X: FeaturesType,
-        y: TargetType,
-        scorer=None,
-        timeout=60,
-        categorical_features=[],
-    ):
-        log.info(f"Tuning {self.name}", msg_type="start")
-
-        self.categorical_feature = categorical_features
-
-        X = convert_to_pandas(X)
-        y = convert_to_numpy(y)
-        y = y.reshape(y.shape[0])
-
-        study = optuna_tune(
-            self.name,
-            self.objective,
-            X=X,
-            y=y,
-            metric=metric,
-            timeout=timeout,
-            random_state=self.random_state,
-        )
-
-        # set best parameters
-        for key, val in study.best_params.items():
-            setattr(self, key, val)
-        self.num_iterations = study.best_trial.user_attrs["num_iterations"]
-
-        log.info(f"{len(study.trials)} trials completed", msg_type="optuna")
-        log.info(f"{self.params}", msg_type="best_params")
-        log.info(f"Tuning {self.name}", msg_type="end")
-
-    def _predict(self, X_test):
-        """Predict on one dataset. Average all fold models"""
-        X_test = convert_to_pandas(X_test)
-
-        y_pred = np.zeros(X_test.shape[0])
-        for fold_model in self.models:
-            y_pred += fold_model.predict(X_test)
-
-        y_pred = y_pred / len(self.models)
-        return y_pred
-
-    @property
-    def params(self):
-        return {
-            **self.get_not_tuned_params(),
-            "objective_type": self.objective_type,
-            "max_depth": self.max_depth,
-            "num_leaves": self.num_leaves,
-            "min_data_in_leaf": self.min_data_in_leaf,
-            "bagging_fraction": self.bagging_fraction,
-            "bagging_freq": self.bagging_freq,
-            "feature_fraction": self.feature_fraction,
-            "lambda_l1": self.lambda_l1,
-            "lambda_l2": self.lambda_l2,
-            "min_gain_to_split": self.min_gain_to_split,
-        }
-
-
-class LightGBMClassification(BaseModel):
-    def __init__(
-        self,
-        objective_type="binary",
-        boosting="gbdt",
-        num_iterations=2000,
-        learning_rate=0.03,
-        max_depth=-1,
-        num_leaves=31,
-        min_data_in_leaf=20,
-        bagging_fraction=1,
-        bagging_freq=0,
-        feature_fraction=1,
-        early_stopping_round=100,
-        lambda_l1=0,
-        lambda_l2=0,
-        min_gain_to_split=0,
-        is_unbalance=False,
-        class_weight=None,
-        n_jobs=6,
-        random_state=42,
-        time_series=False,
-        eval_metric=None,
-        verbose=-1,
-    ):
-
-        self.name = "LightGBMClassification"
-
-        self.categorical_feature = []
-
-        self.objective_type = objective_type
-        self.boosting = boosting
-        self.num_iterations = num_iterations
-        self.max_depth = max_depth
-        self.learning_rate = learning_rate
-        self.min_data_in_leaf = min_data_in_leaf
-        self.bagging_fraction = bagging_fraction
-        self.bagging_freq = bagging_freq
-        self.feature_fraction = feature_fraction
-        self.early_stopping_round = early_stopping_round
-        self.lambda_l1 = lambda_l1
-        self.lambda_l2 = lambda_l2
-        self.min_gain_to_split = min_gain_to_split
-        self.num_leaves = num_leaves
-        self.is_unbalance = is_unbalance
-        self.class_weight = class_weight
-
-        self.n_jobs = n_jobs
-        self.random_state = random_state
-        self.verbose = verbose
-        self.time_series = time_series
-        self.eval_metric = eval_metric
-
-        if self.time_series:
-            self.kf = TimeSeriesSplit(n_splits=5)
-        else:
-            self.kf = StratifiedKFold(
-                n_splits=5, random_state=self.random_state, shuffle=True
-            )
-
-        # self.models = None
-        # self.oof_preds = None
-
-    def fit(self, X: FeaturesType, y: TargetType, categorical_features=[]):
-        log.info(f"Fitting {self.name}", msg_type="start")
-
-        self.categorical_feature = categorical_features
-
-        X = convert_to_pandas(X)
-        y = convert_to_numpy(y)
-        y = y.reshape(y.shape[0])
-        self.n_classes = np.unique(y).shape[0]
-
-        # correct objective based on the number of classes
-        if self.n_classes > 2:
-            self.objective_type = "multiclass"
-
-        cv = self.kf.split(X, y)
-
-        self.models = []
-        oof_preds = np.full((y.shape[0], self.n_classes), fill_value=np.nan)
-        for i, (train_idx, test_idx) in enumerate(cv):
-            log.info(f"{self.name} fold {i}", msg_type="fit")
-
-            inner_params = self.inner_params
-
-            # BUG LightGBM produces very annoying alias warning.
-            # Temp fix is to rename all the input parameters.
-            # In the recent versions of lightgbm the issue is solved.
-            inner_params["colsample_bytree"] = inner_params.pop("feature_fraction")
-            inner_params["reg_alpha"] = inner_params.pop("lambda_l1")
-            inner_params["subsample"] = inner_params.pop("bagging_fraction")
-            inner_params["min_child_samples"] = inner_params.pop("min_data_in_leaf")
-            inner_params["min_split_gain"] = inner_params.pop("min_gain_to_split")
-            inner_params["subsample_freq"] = inner_params.pop("bagging_freq")
-            inner_params["reg_lambda"] = inner_params.pop("lambda_l2")
-
-            inner_params["boosting_type"] = inner_params.pop("boosting")
-
-            # fit/predict fold model
-            fold_model = lgb.LGBMClassifier(**inner_params)
-            fold_model.fit(
-                X.iloc[train_idx],
-                y[train_idx],
-                eval_set=[(X.iloc[test_idx], y[test_idx])],
-                verbose=False,
-                early_stopping_rounds=self.early_stopping_round,
-                categorical_feature=self.categorical_feature,
-                eval_metric=self.eval_metric,
-            )
-            oof_preds[test_idx] = fold_model.predict_proba(X.iloc[test_idx])
-
-            # append fold model
-            self.models.append(fold_model)
-
-        log.info(f"Fitting {self.name}", msg_type="end")
-
-        return oof_preds
-
-    def get_trial_params(self, trial):
-        param_distr = {
+    def get_base_trial_params(trial):
+        default_param_distr = {
             "max_depth": trial.suggest_int("max_depth", 1, 16),
             "num_leaves": trial.suggest_int("num_leaves", 10, 512),
             "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 1, 256),
@@ -369,196 +214,192 @@ class LightGBMClassification(BaseModel):
             "lambda_l1": trial.suggest_float("lambda_l1", 0, 10),
             "lambda_l2": trial.suggest_float("lambda_l2", 0, 10),
             "min_gain_to_split": trial.suggest_float("min_gain_to_split", 0, 20),
-            "is_unbalance": trial.suggest_categorical("is_unbalance", [True, False]),
         }
 
-        return param_distr
-
-    def objective(self, trial, X, y, scorer):
-        cv = self.kf.split(X, y)
+        return default_param_distr
+    
+    def optuna_objective(self, trial, X: FeaturesType, y: TargetType):
+        kf = get_splitter(self.model_type, n_splits=self.n_splits, time_series=self.time_series, random_state=self.seed)
+        cv = kf.split(X, y)
 
         trial_params = self.get_trial_params(trial)
         not_tuned_params = self.not_tuned_params
-
-        # BUG LightGBM produces very annoying alias warning.
-        # Temp fix is to rename all the input parameters.
-        # In the recent versions of lightgbm the issue is solved.
-        trial_params["colsample_bytree"] = trial_params.pop("feature_fraction")
-        trial_params["reg_alpha"] = trial_params.pop("lambda_l1")
-        trial_params["subsample"] = trial_params.pop("bagging_fraction")
-        trial_params["min_child_samples"] = trial_params.pop("min_data_in_leaf")
-        trial_params["min_split_gain"] = trial_params.pop("min_gain_to_split")
-        trial_params["subsample_freq"] = trial_params.pop("bagging_freq")
-        trial_params["reg_lambda"] = trial_params.pop("lambda_l2")
-
-        not_tuned_params["boosting_type"] = not_tuned_params.pop("boosting")
-
-        # add parameter `class_weight` for multiclass only
-        if self.n_classes > 2:
-            trial_params["class_weight"] = trial.suggest_categorical(
-                "class_weight", ["balanced", None]
-            )
-
-        oof_preds = np.full((y.shape[0], self.n_classes), fill_value=np.nan)
+        not_tuned_params['num_iterations'] = self.max_iterations
+        inner_params = self._fix_params_name({**not_tuned_params, **trial_params})
+        
+        # oof_preds = get_epmty_array(y.shape[0], None if self.num_class == 2 else self.num_class)
         best_num_iterations = []
-        models = []
-        for train_idx, test_idx in cv:
-            # train_data = lgb.Dataset(
-            #     X[train_idx], y[train_idx], categorical_feature=self.categorical_feature
-            # )
-            # test_data = lgb.Dataset(
-            #     X[test_idx], y[test_idx], categorical_feature=self.categorical_feature
-            # )
-
-            # model = lgb.train(
-            #     params={**trial_params, **not_tuned_params},
-            #     train_set=train_data,
-            #     valid_sets=[test_data],
-            #     verbose_eval=False
-            # )
-
-            # Here I decided to use sklearn API
-            # because `lgb.train` does not contain parameter `class_weight`
-            # that drastically improves the performance of models
-            model = lgb.LGBMClassifier(**trial_params, **not_tuned_params)
-            model.fit(
-                X.iloc[train_idx],
-                y[train_idx],
-                eval_set=[(X.iloc[test_idx], y[test_idx])],
-                verbose=False,
-                early_stopping_rounds=not_tuned_params["early_stopping_round"],
-                categorical_feature=self.categorical_feature,
-                eval_metric=self.eval_metric,
-            )
-
-            oof_preds[test_idx] = model.predict_proba(X.iloc[test_idx])
-            best_num_iterations.append(model.best_iteration_)
-            models.append(model)
-
+        scores = []
+        for i, (train_idx, test_idx) in enumerate(cv):
+            # log.info(f"{self.name} fold {i}", msg_type="fit")
+            X_train, y_train, X_test, y_test = self._get_train_test_data(X, y, train_idx, test_idx)
+            fold_model, score = self.fit_fold(
+                X_train, y_train,
+                X_test, y_test,
+                inner_params=inner_params)
+            scores.append(score)
+            # oof_preds[test_idx] = fold_model.predict(X_test)
+            best_num_iterations.append(fold_model.current_iteration())
         # add `num_iterations` to the optuna parameters
         trial.set_user_attr("num_iterations", round(np.mean(best_num_iterations)))
-
+        return np.mean(scores)
         # remove possible Nones in oof
-        not_none_oof = np.where(np.logical_not(np.isnan(oof_preds[:, 0])))[0]
+        # if oof_preds.ndim == 1:
+        #     not_none_oof = ~np.isnan(oof_preds).any(axis=1)
+        # else:
+        #     not_none_oof = ~np.isnan(oof_preds)
 
-        if oof_preds.ndim == 2 and oof_preds.shape[1] == 2:
-            # binary case
-            trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof, 1])
-        else:
-            trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof])
+        # if oof_preds.ndim == 2 and oof_preds.shape[1] == 2:
+        #     # binary case
+        #     trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof, 1])
+        # else:
+        #     trial_metric = scorer.score(y[not_none_oof], oof_preds[not_none_oof])
 
-        # if self.models is None:
-        #     # no trials are completed yet
-        #     # save tuned models
-        #     self.models = models
-        #     self.oof_preds = oof_preds
-
-        # elif (trial_metric <= trial.study.best_value and trial.study.direction == 1) or (
-        #     trial_metric >= trial.study.best_value and trial.study.direction == 2
-        #     ):
-
-        #     # new best
-        #     # save tuned models
-        #     self.models = models
-        #     self.oof_preds = oof_preds
-
-        return trial_metric
+        # return trial_metric
 
     def tune(
         self,
         X: FeaturesType,
         y: TargetType,
-        scorer=None,
-        timeout=60,
-        categorical_features=[],
+        timeout: int=60,
+        categorical_feature: Optional[list[str]] = None,
     ):
         log.info(f"Tuning {self.name}", msg_type="start")
 
-        self.categorical_feature = categorical_features
-
-        X = convert_to_pandas(X)
-        y = convert_to_numpy(y)
-        y = y.reshape(y.shape[0])
-        self.n_classes = np.unique(y).shape[0]
-        self.eval_metric = get_eval_metric(scorer)
-
-        if self.n_classes > 2:
-            self.objective_type = "multiclass"
-
+        from .metrics import METRICS_GREATER_IS_BETTER
+        
+        if isinstance(self.eval_metric, str):
+            greater_is_better = self.get_str_greater_is_better(
+                self.model_type, 
+                self.eval_metric, 
+                METRICS_GREATER_IS_BETTER)
+        elif self.eval_metric is not None:
+            _, _, greater_is_better = self.eval_metric(
+                [1, 0, 1], 
+                lgb.Dataset(
+                    data=np.expand_dims([1, 0, 1], axis=1), 
+                    label=[1, 0, 1]
+                    ).construct())
+        else:
+            greater_is_better = None
+            
+        X, y = self._prepare(X, y, categorical_feature)
         study = tune_optuna(
             self.name,
-            self.objective,
-            X=X,
-            y=y,
-            scorer=scorer,
+            self.optuna_objective,
+            X=X, y=y,
+            greater_is_better=greater_is_better,
             timeout=timeout,
-            random_state=self.random_state,
-        )
-
-        # set best parameters
-        for key, val in study.best_params.items():
-            setattr(self, key, val)
-        self.num_iterations = study.best_trial.user_attrs["num_iterations"]
-
+            random_state=self.seed,)
+        self.best_params = study.best_params
+        self.best_params['num_iterations'] = study.best_trial.user_attrs["num_iterations"]
+        
         log.info(f"{len(study.trials)} trials completed", msg_type="optuna")
         log.info(f"{self.params}", msg_type="best_params")
         log.info(f"Tuning {self.name}", msg_type="end")
 
-    def _predict(self, X_test):
+    def _predict(self, X):
         """Predict on one dataset. Average all fold models"""
-        X_test = convert_to_pandas(X_test)
+        X = self._prepare(X, categorical_feature=self.categorical_feature)
+        y_pred = np.zeros((X.shape[0], self.num_class)) if self.num_class and self.num_class > 2 \
+            else np.zeros((X.shape[0],))
 
-        y_pred = np.zeros((X_test.shape[0], self.n_classes))
         for fold_model in self.models:
-            y_pred += fold_model.predict_proba(X_test)
-
+            y_pred += fold_model.predict(X)
         y_pred = y_pred / len(self.models)
+        
+        if self.model_type == "classification" and y_pred.ndim == 1:
+            y_pred = np.vstack((1 - y_pred, y_pred)).T
         return y_pred
 
     @property
-    def not_tuned_params(self):
-        return {
-            "num_iterations": self.num_iterations,
-            "boosting": "gbdt",
-            "learning_rate": self.learning_rate,
+    def not_tuned_params(self) -> dict:
+        not_tuned_params = {
+            "num_threads": self.num_threads,
+            "seed": self.seed,
+            "verbosity": self.verbosity,
+            "device_type": self.device_type,
             "early_stopping_round": self.early_stopping_round,
-            "n_jobs": self.n_jobs,
-            "random_state": self.random_state,
-            "verbose": self.verbose,
+            "early_stopping_min_delta": self.early_stopping_min_delta,
+            'objective': self.objective,
+            'metric': self.metric,
         }
+        return {key: value for key, value in not_tuned_params.items() if value is not None}
 
     @property
-    def inner_params(self):
-        params = {
-            "max_depth": self.max_depth,
-            "num_leaves": self.num_leaves,
-            "min_data_in_leaf": self.min_data_in_leaf,
-            "bagging_fraction": self.bagging_fraction,
-            "bagging_freq": self.bagging_freq,
-            "feature_fraction": self.feature_fraction,
-            "lambda_l1": self.lambda_l1,
-            "lambda_l2": self.lambda_l2,
-            "min_gain_to_split": self.min_gain_to_split,
-            "is_unbalance": self.is_unbalance,
-            "class_weight": self.class_weight,
+    def inner_params(self) -> dict:
+        return {
+            'num_iterations': self.num_iterations,
             **self.not_tuned_params,
+            **{key: value for key, value in self.__dict__.items() if key not in self._not_inner_model_params},
+            **self.best_params,
         }
+
+
+class LightGBMClassification(LightGBMBase):
+    def __init__(
+        self,
+        random_state: int = 42,
+        time_series: bool = False,
+        verbose: int = -1,
+        device_type: str | None = None,
+        n_jobs: Optional[int] = None,
+        n_splits: int = 5,
+        eval_metric: Optional[str | Callable] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            model_type="classification",
+            random_state=random_state,
+            time_series=time_series,
+            verbose=verbose,
+            device_type=device_type,
+            n_jobs=n_jobs,
+            n_splits=n_splits,
+            eval_metric=eval_metric,
+            **kwargs,
+        )
+    
+    @staticmethod   
+    def get_trial_params(trial):
+        params = LightGBMBase.get_base_trial_params(trial)
+        params["is_unbalance"] = trial.suggest_categorical("is_unbalance", ['true', 'false'])
+        # if params["is_unbalance"] == 'false':
+        #     params["scale_pos_weight"] = trial.suggest_float("scale_pos_weight", 0, 1)
         return params
 
-    @property
-    def meta_params(self):
-        return {
-            "eval_metric": (
-                self.eval_metric
-                if isinstance(self.eval_metric, str) or self.eval_metric is None
-                else "custom_metric"
-            ),
-            "time_series": self.time_series,
-        }
 
-    @property
-    def params(self):
-        return {
-            **self.inner_params,
-            **self.meta_params,
-        }
+class LightGBMRegression(LightGBMBase):
+    def __init__(
+        self,
+        random_state: int = 42,
+        time_series: bool = False,
+        verbose: int = -1,
+        device_type: str | None = None,
+        n_jobs: Optional[int] = None,
+        n_splits: int = 5,
+        eval_metric: Optional[str | Callable] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            model_type="regression",
+            random_state=random_state,
+            time_series=time_series,
+            verbose=verbose,
+            device_type=device_type,
+            n_jobs=n_jobs,
+            n_splits=n_splits,
+            eval_metric=eval_metric,
+            **kwargs,
+        )
+    
+    @staticmethod
+    def get_trial_params(trial):
+        params = LightGBMBase.get_base_trial_params(trial)
+        params.update({
+            "objective": trial.suggest_categorical(
+                "objective", ["regression", "regression_l1", "huber"]
+            ),
+        })
+
+        return params

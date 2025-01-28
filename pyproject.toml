@@ -13,30 +13,41 @@ dependencies = [
     "catboost>=1.2.7",
     "lightgbm>=3.2.1",
     "xgboost>=2.1.2",
-    "lightautoml==0.4.0.dev1",
+    "lightautoml>=0.4.0",
     "numpy<2.0.0",
     "transformers>=4.46.1",
     "gensim>=4.3.3",
     "nltk>=3.9.1",
     "feature-engine>=1.6.2",
+    "numba>=0.60.0",
 ]
 requires-python = "==3.11.*"
 readme = "README.md"
 license = {text = "MIT"}
 
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pytest.ini_options]
+testpaths = [
+    "tests",
+]
+norecursedirs = "docs *.egg-info .git appdir .tox"
+python_files = [
+    "test_*.py",
+]
+addopts = "-n auto --disable-warnings"
+
 [tool.pdm]
 distribution = true
-[tool.pdm.dev-dependencies]
+
+[dependency-groups]
 dev = [
     "kaggle>=1.6.17",
     "ipykernel>=6.29.5",
     "ipywidgets>=8.1.5",
     "clearml>=1.16.5",
     "pytest>=8.3.3",
+    "pytest-xdist>=3.6.1",
 ]
-
-[build-system]
-requires = ["pdm-backend"]
-build-backend = "pdm.backend"
-
-

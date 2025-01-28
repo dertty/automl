@@ -1,12 +1,13 @@
 from .catboost import CatBoostClassification, CatBoostRegression
 from .lama import TabularLama, TabularLamaNN, TabularLamaUtilized
 from .lightgbm import LightGBMClassification, LightGBMRegression
-from .linear import LogisticRegression, RidgeRegression
-from .sklearn_forests import (
+from .sklearn import (
     ExtraTreesClassification,
     ExtraTreesRegression,
     RandomForestClassification,
     RandomForestRegression,
+    LogisticRegression,
+    RidgeRegression,
 )
 from .xgboost import XGBClassification, XGBRegression
 
@@ -28,7 +29,11 @@ forest_models = {
 }
 
 boosting_models = {
-    "regression": [CatBoostRegression, XGBRegression, LightGBMRegression],
+    "regression": [
+        CatBoostRegression, 
+        XGBRegression, 
+        LightGBMRegression,
+    ],
     "classification": [
         CatBoostClassification,
         XGBClassification,
@@ -87,4 +92,23 @@ NAMES_MODELS_MAPPING = {
     "lama": lama_models,
     "lama_nn": lama_nn_models,
     "all": all_models,
+    "catboost": {
+        "regression": [CatBoostRegression],
+        "classification": [CatBoostClassification,],
+    },
+    "lightgbm": {
+        "regression": [LightGBMRegression],
+        "classification": [LightGBMClassification,],
+    },
+    "xgboost": {
+        "regression": [XGBRegression],
+        "classification": [XGBClassification,],
+    },
+    "test": {
+        "regression": [LightGBMClassification, CatBoostRegression],
+        "classification": [XGBClassification,
+                        #    LightGBMClassification, 
+                           CatBoostClassification,
+                           ],
+    }
 }

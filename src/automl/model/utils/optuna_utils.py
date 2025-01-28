@@ -82,7 +82,7 @@ def tune_optuna(
     objective,
     X,
     y,
-    scorer,
+    greater_is_better,
     timeout=60,
     n_trials=None,
     random_state=0,
@@ -97,10 +97,10 @@ def tune_optuna(
     sampler = optuna.samplers.TPESampler(seed=random_state)
 
     # optimize parameters
-    direction = "maximize" if scorer.greater_is_better else "minimize"
+    direction = "maximize" if greater_is_better else "minimize"
     study = optuna.create_study(
         study_name=name,
-        direction="maximize" if scorer.greater_is_better else "minimize",
+        direction=direction,
         sampler=sampler,
     )
 
@@ -118,14 +118,14 @@ def tune_optuna(
 
     if n_trials is not None:
         study.optimize(
-            lambda trial: objective(trial, X, y, scorer, **kwargs),
+            lambda trial: objective(trial, X, y, **kwargs),
             n_trials=n_trials,
             n_jobs=n_jobs,
             callbacks=callbacks,
         )
     else:
         study.optimize(
-            lambda trial: objective(trial, X, y, scorer, **kwargs),
+            lambda trial: objective(trial, X, y, **kwargs),
             timeout=timeout,
             n_jobs=n_jobs,
             callbacks=callbacks,

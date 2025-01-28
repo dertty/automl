@@ -1,0 +1,10 @@
+{
+    "makefile.configureOnOpen": false,
+    "python.testing.pytestArgs": [
+        "tests", 
+        "-n", "auto",
+        "--disable-warnings"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+}

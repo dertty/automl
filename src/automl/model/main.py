@@ -87,7 +87,7 @@ class AutoModel:
 
         self.flag_blend_is_best = False
         if self.blend:
-            self.blender = CoordDescBlender()
+            self.blender = CoordDescBlender(scorer=self.scorer)
             self.models_list.append(self.blender)
 
         self.path = PATH
@@ -195,16 +195,14 @@ class AutoModel:
 
             # tune the model
             model.tune(
-                x_train_iter,
-                y,
-                scorer=self.scorer,
+                x_train_iter, y,
                 timeout=tuning_timeout,
-                categorical_features=categorical_features,
+                categorical_feature=categorical_features,
             )
 
             # fit the tuned model and obtain out of fold predictions
             oof_preds = model.fit(
-                x_train_iter, y, categorical_features=categorical_features
+                x_train_iter, y, categorical_feature=categorical_features
             )
 
             # predict on train
@@ -217,10 +215,10 @@ class AutoModel:
             # evaluate on out_of_fold
             # remove possible Nones in oof
             if oof_preds.ndim == 1:
-                # regression
+                # regression or binary
                 not_none_oof = np.where(np.logical_not(np.isnan(oof_preds)))[0]
             else:
-                # classification
+                # multiclass classification
                 not_none_oof = np.where(np.logical_not(np.isnan(oof_preds[:, 0])))[0]
 
             oof_scores = self.evaluate(y[not_none_oof], oof_preds[not_none_oof])
@@ -359,6 +357,7 @@ class AutoModel:
         return y_pred
 
     def evaluate(self, y_true: TargetType, y_pred: TargetType):
+        print(y_true.shape, y_pred.shape)
         if self.task == "classification":
             # binary classifiation
             if len(np.unique(y_true)) <= 2:

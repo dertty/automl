@@ -13,12 +13,15 @@
                 "ms-toolsai.jupyter",
                 "ms-python.mypy-type-checker",
                 "ms-python.debugpy",
-                "ms-python.vscode-pylance"
+                "ms-python.vscode-pylance",
+                "GitHub.copilot",
+                "eamodio.gitlens"
             ]
         }
     },
     "containerEnv": {
 		"KAGGLE_USERNAME": "",
 		"KAGGLE_KEY": ""
-	}
+	},
+    "runArgs": []
 }
