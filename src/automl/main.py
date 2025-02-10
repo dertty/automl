@@ -1,6 +1,6 @@
 import numpy as np
 
-from .feature_processing import (
+from automl.feature_processing import (
     CatboostShapFeatureSelector,
     FeatureSelectionTransformer,
     PreprocessingPipeline,

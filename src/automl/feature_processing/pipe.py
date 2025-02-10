@@ -50,7 +50,8 @@ class PreprocessingPipeline(Pipeline):
         self.num_encoder = num_encoder
         self.verbose=verbose
         self.random_state = random_state
-        self.memory=None
+        self.memory = None
+        self.transform_input = None
 
         # Трансформер для отбора признаков с долей пропусков менее заданного значения
         nan_col_selector = ColumnTransformer(
