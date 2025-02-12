@@ -1,11 +1,8 @@
+from typing import Optional, List
+
 import pandas as pd
 import numpy as np
-from typing import TypeVar, Optional, List
-from ..utils.utils import ArrayType
-from ..utils.utils import get_array_type, check_array_type
-from ..loggers import get_logger
-from .utils import find_correlated_features
-
+from sklearn.compose import ColumnTransformer
 from feature_engine.selection.base_selector import BaseSelector
 from feature_engine.dataframe_checks import (
     _check_contains_inf,
@@ -13,7 +10,14 @@ from feature_engine.dataframe_checks import (
     check_X,
 )
 
+from automl.utils.utils import ArrayType
+from automl.utils.utils import get_array_type, check_array_type
+from automl.loggers import get_logger
+from .utils import find_correlated_features
+
+
 log = get_logger(__name__)
+
 
 class NanFeatureSelector:
     '''
@@ -296,3 +300,23 @@ class SmartCorrelatedSelectionFast(BaseSelector):
         self._get_feature_names_in(X)
 
         return self
+    
+
+def nan_col_selector_step(nan_share_ts: float = 0.8):
+    # Трансформер для отбора признаков с долей пропусков менее заданного значения
+    nan_col_selector = ColumnTransformer(
+        transformers=[('DropNanColumns', 'drop', NanFeatureSelector(nan_share_ts=nan_share_ts))],
+        remainder='passthrough',
+        verbose_feature_names_out=False   # Оставляем оригинальные названия колонок
+        ).set_output(transform='pandas')      # Трансформер будет возвращать pandas
+    return nan_col_selector
+
+
+def qconst_col_selector(most_frequent_value_ratio_ts: float = 0.95):
+    # Трансформер для отбора (квази)константных признаков
+    qconst_col_selector = ColumnTransformer(
+        transformers=[('DropQConstantColumns', 'drop', QConstantFeatureSelector(feature_val_share_ts=most_frequent_value_ratio_ts))],
+        remainder='passthrough',
+        verbose_feature_names_out=False   # Оставляем оригинальные названия колонок
+        ).set_output(transform='pandas')      # Трансформер будет возвращать pandas
+    return qconst_col_selector

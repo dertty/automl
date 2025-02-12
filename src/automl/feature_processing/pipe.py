@@ -16,12 +16,60 @@ from sklearn.preprocessing import(
 from feature_engine.outliers import Winsorizer
 from feature_engine.selection import DropHighPSIFeatures
 from .selectors import NanFeatureSelector, QConstantFeatureSelector, ObjectColumnsSelector
+from .selectors import nan_col_selector, qconst_col_selector
 from .transformers import AdversarialTestTransformer, CorrFeaturesTransformer, DropHighPSITransformer, CorrFeaturesTransformerFast, WinsorizerFast
 from ..loggers import get_logger, catchstdout
 
+from transformers import FeatureSelectionTransformer, CatboostShapFeatureSelector
+from sklearn.pipeline import Pipeline, FeatureUnion
 
 log = get_logger(__name__)
 
+
+
+class FeatureSelectionPipeline(Pipeline):
+    def __init__(
+        self, 
+        nan_share_ts: float = 1.0, 
+        most_frequent_value_ratio_ts: float = 1.0, 
+        n_features_to_select: Optional[int] = None,
+        selectors_by_importances: Optional[Union[str, List[str]]] = None
+    ):
+        super().__init__(steps=[])
+        steps = []
+        if nan_share_ts:
+            steps.append(('nan_cols_dropper', nan_col_selector(nan_share_ts=nan_share_ts)))
+        if most_frequent_value_ratio_ts:
+            steps.append(('qconst_dropper', qconst_col_selector(most_frequent_value_ratio_ts=most_frequent_value_ratio_ts)))
+        if selectors_by_importances:
+            steps.append(('feature_selector', self._init_selectors_by_importances(selectors_by_importances, n_features_to_select=n_features_to_select)))
+        super().__init__(steps=self.steps)
+    
+    @staticmethod
+    def get_importance_selector(selector: str, **kwargs):
+        if selector == 'CatboostByShap':
+            return ('CatboostShapFeatureSelector', CatboostShapFeatureSelector(**kwargs))
+        elif selector == 'LAMA':
+            return ('LAMAFeatureSelector', FeatureSelectionTransformer(**kwargs))
+        else:
+            raise ValueError(f"Unknown type of selectors_by_importances: {selector}")
+            
+    def _init_selectors_by_importances(self, selectors_by_importances, **kwargs): 
+        if isinstance(selectors_by_importances, str):
+            steps = [self.get_importance_selector(selectors_by_importances, **kwargs)]  
+        elif isinstance(selectors_by_importances, list):
+            steps = []
+            for selector in selectors_by_importances:
+                steps.append(self.get_importance_selector(selector, **kwargs))
+        else: 
+            raise ValueError(f"Unknown type of selectors_by_importances: {type(selectors_by_importances)}")
+        return FeatureUnion(steps)
+    
+    
+
+    
+    
+    
 
 class PreprocessingPipeline(Pipeline):
     def __init__(

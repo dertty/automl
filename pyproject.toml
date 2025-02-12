@@ -20,6 +20,7 @@ dependencies = [
     "nltk>=3.9.1",
     "feature-engine>=1.6.2",
     "numba>=0.60.0",
+    "nbformat>=4.2.0",
 ]
 requires-python = "==3.11.*"
 readme = "README.md"

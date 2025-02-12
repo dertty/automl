@@ -18,12 +18,16 @@ from .CustomMetrics import regression_roc_auc_score
 from ..loggers import get_logger
 from .selectors import SmartCorrelatedSelectionFast
 
-
+from automl.utils.model_utils import get_splitter, get_epmty_array
+from .feature_selection.base_model_selector import BaseModelSelector
 from sklearn.model_selection import train_test_split
 
 from catboost import CatBoostClassifier
 from catboost import EFeaturesSelectionAlgorithm, EShapCalcType
 from catboost import Pool
+from typing import Optional, Any, List
+from automl.model.type_hints import FeaturesType, TargetType
+
 
 log = get_logger(__name__)
 
@@ -58,6 +62,7 @@ class WinsorizerFast(BaseEstimator, TransformerMixin):
     
     def set_output(self, *, transform):
         return self
+
 
 class AdversarialTestTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, split_col='is_test_for_val', random_state=42, auc_trshld = 0.65):
@@ -144,7 +149,7 @@ class AdversarialTestTransformer(BaseEstimator, TransformerMixin):
         
         return X
     
-    
+
 class DropHighPSITransformer(BaseEstimator, TransformerMixin):
     def __init__(self, split_col='is_test_for_val', psi_cut_off=0.5, psi_threshold=0.2,
                  psi_bins=15, psi_strategy='equal_width', psi_missing_values='ignore'):
@@ -199,7 +204,8 @@ class CorrFeaturesTransformer(BaseEstimator, TransformerMixin):
             log.info(f"Corr features to drop: {self.drop_corr_features}", msg_type="preprocessing")
     
         return self
-    
+
+  
 class CorrFeaturesTransformerFast(BaseEstimator, TransformerMixin):
     def __init__(self, corr_ts=0.8, corr_coef_methods=['pearson', 'spearman'], corr_selection_method="missing_values"):
     
@@ -574,59 +580,125 @@ class FeatureSelectionTransformer(BaseEstimator, TransformerMixin):
         X = X[self.selected_features + [self.target_colname]]
        
         return X
+
+
+
     
-    
-class CatboostShapFeatureSelector(BaseEstimator, TransformerMixin):
+class CatboostShapFeatureSelectorCV(BaseModelSelector):
     def __init__(
         self,
-        n_features_to_select=50,
-        complexity="Regular",
-        steps=5,
-        random_state=42,
-        n_jobs=1):
-        """Perform feature selection by recurcive catboost shap.
-
-        Args:
-            n_features_to_select (int, optional). Defaults to 50.
-            complexity (str, optional): One of ["Approximate", "Regular", "Exact"]. Defaults to "Regular".
-            steps (int, optional). Defaults to 10.
-            random_state (int, optional). Defaults to 42.
-            n_jobs (int, optional). Defaults to 1.
-        """
+        model_type: Optional[str] = None,
+        random_state: int = 42,
+        time_series: Optional[bool] = False,
+        verbose: bool = False,
+        device_type: Optional[str] = None,
+        n_jobs: Optional[int] = None,
+        n_splits: int = 5,
+        eval_metric: Optional[str | Any] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            model_type=model_type,
+            random_state=random_state,
+            time_series=time_series,
+            verbose=verbose,
+            device_type=device_type,
+            n_jobs=n_jobs,
+            n_splits=n_splits,
+            eval_metric=eval_metric,
+            )
+        #selection params
+        self.n_features_to_select = kwargs.pop('n_features_to_select', None)
+        self.complexity = kwargs.pop('complexity', None)
+        self.algorithm = kwargs.pop('algorithm', None)
+        self.steps = kwargs.pop('steps', 5)
         
-        self.n_features_to_select = n_features_to_select
-        self.complexity = EShapCalcType[complexity]
-        self.steps = steps
-        self.random_state = random_state
-        self.n_jobs = n_jobs
         
-    def fit(self, X, y, categorical_features=[]):
-        log.info(f'Started feature selection.', msg_type="feature_selection")
+        # model params
+        self.thread_count = kwargs.pop('thread_count', self.n_jobs)
+        self.task_type = kwargs.pop('task_type', self.device_type).upper()
+        self.verbose = kwargs.pop('verbose', None) or kwargs.pop('verbose_eval', self.verbose)
         
-        X_train, X_val, y_train, y_val = train_test_split(X.copy(), y.copy(), stratify=y, test_size=0.3, random_state=self.random_state)
+        # other model params
+        self.iterations: int = kwargs.pop('num_iterations', 2_000)
+        self.iterations = kwargs.pop('iterations', None) or kwargs.pop('n_iterations', self.iterations)
+        self.od_type = kwargs.pop('od_type', 'Iter')
+        self.od_wait = kwargs.pop('early_stopping_rounds', None) or kwargs.pop('od_wait', 100)
+        self.od_pval = None if self.od_type == "Iter" else kwargs.pop('od_pval', 1e-5)
+        self.logging_level = kwargs.pop('logging_level', 'Silent')
+        
+        self.kwargs = kwargs
+    
+    @staticmethod
+    def catboost_feature_selection(
+        X_train, y_train, X_test, y_test,
+        categorical_features: List[str] = [],
+        n_features_to_select: Optional[int] =None, 
+        logging_level: str = 'Silent',
+        complexity: str = 'Approximate', 
+        algorithm: str = 'RecursiveByPredictionValuesChange',
+        steps: int = 5, 
+        random_state: int = 42, 
+        **kwargs
+        ):
+        assert complexity in ('Regular', 'Regular', 'Exact'), "Incorrect complexity. Choose 'Regular', 'Regular', 'Exact' complexity"
+        assert algorithm in ('RecursiveByPredictionValuesChange', 'RecursiveByLossFunctionChange', 'RecursiveByShapValues'), "Incorrect algorithm. Choose 'RecursiveByPredictionValuesChange', 'RecursiveByLossFunctionChange', 'RecursiveByShapValues' algorithm"
         
         train_pool = Pool(X_train, y_train, cat_features=categorical_features)
-        val_pool = Pool(X_val, y_val, cat_features=categorical_features)
+        test_pool = Pool(X_test, y_test, cat_features=categorical_features)
         
-        model = CatBoostClassifier(random_state=self.random_state, verbose=0, early_stopping_rounds=200, iterations=2500,
-                                   thread_count=self.n_jobs, allow_writing_files=False)
+        model = CatBoostClassifier(random_state=random_state, logging_level=logging_level, **kwargs,)
         
-        summary = model.select_features(train_pool, eval_set=val_pool,
-                                features_for_select=X_train.columns.tolist(),
-                                num_features_to_select=self.n_features_to_select,
-                                train_final_model=False,
-                                logging_level="Silent",
-                                algorithm=EFeaturesSelectionAlgorithm.RecursiveByShapValues,
-                                shap_calc_type=self.complexity, steps=self.steps)
+        summary = model.select_features(
+            train_pool, eval_set=test_pool,
+            features_for_select=X_train.columns.to_list(),
+            num_features_to_select=n_features_to_select if n_features_to_select else 1,
+            train_final_model=False,
+            logging_level=logging_level,
+            algorithm=algorithm,
+            shap_calc_type=complexity, 
+            steps=steps)
         
-        self.selected_features = summary["selected_features_names"]
+        if n_features_to_select is None:
+            optimal_idx = np.argmin(summary['loss_graph']['loss_values'])
+            optimal_features = summary['selected_features_names'] + summary['eliminated_features_names'][::-1][:optimal_idx]
+            return optimal_features
+        else:
+            return summary['selected_features_names']
+    
+    def transform(self, X: FeaturesType, y: Optional[TargetType] = None):
+        if not hasattr(self, 'selected_features') or self.selected_features is None:
+            raise RuntimeError("You must fit the transformer before calling transform.")
+        return X[self.selected_features]
+
+    def fit(self, X: FeaturesType, y: Optional[TargetType]):
+        log.info(f'Started feature selection.', msg_type="feature_selection")
+
+        kf = get_splitter(
+            self.model_type, 
+            n_splits=self.n_splits, 
+            time_series=self.time_series, 
+            random_state=self.random_state)
+        cv = kf.split(X, y)
         
+        selected_features = set()
+        for i, (train_idx, test_idx) in enumerate(cv):
+            X_train, y_train, X_test, y_test = self._get_train_test_data(X, y, train_idx, test_idx)
+            optimal_features = self.catboost_feature_selection(
+                X_train, y_train, X_test, y_test, 
+                categorical_features = self.categorical_features or [],
+                n_features_to_select = self.n_features_to_select, 
+                logging_level = self.logging_level,
+                complexity = self.complexity,
+                algorithm = self.algorithm,
+                steps = self.steps, 
+                random_state = self.random_state, 
+                allow_writing_files=False)
+            
+            selected_features |= set(optimal_features)
+        
+        self.selected_features = list(selected_features)
         log.info(f'Selected features: {self.selected_features}', msg_type="feature_selection")
         
         return self
-    
-    def transform(self, X, y=None, **kwargs):
-        
-        X = X.copy().loc[:, self.selected_features]
-        return X
         
