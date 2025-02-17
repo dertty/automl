@@ -5,7 +5,7 @@ from catboost import Pool
 
 from typing import Any, Optional, List, Dict, Union
 from ...loggers import get_logger
-from ..base_model import BaseModel
+from ..base import BaseModel
 from ..type_hints import FeaturesType, TargetType
 from ..utils import tune_optuna
 from ..utils.model_utils import get_splitter, get_epmty_array
@@ -24,7 +24,7 @@ class CatBoostBase(BaseModel):
         device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | Any] = None,
+        eval_metric: Optional[Union[str, Any]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -278,10 +278,10 @@ class CatBoostClassification(CatBoostBase):
         random_state: int = 42,
         time_series: bool = False,
         verbose: bool = False,
-        device_type: str | None = None,
+        device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | Any] = None,
+        eval_metric: Optional[Union[str, Any]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -309,10 +309,10 @@ class CatBoostRegression(CatBoostBase):
         random_state: int = 42,
         time_series: bool = False,
         verbose: bool = False,
-        device_type: str | None = None,
+        device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | Any] = None,
+        eval_metric: Optional[Union[str, Any]] = None,
         **kwargs,
     ):
         super().__init__(

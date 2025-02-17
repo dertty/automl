@@ -2,7 +2,7 @@ import warnings
 
 from sklearn.linear_model import LogisticRegression as LogRegSklearn
 from sklearn.linear_model import Ridge
-from typing import Optional
+from typing import Optional, Union
 from ...loggers import get_logger
 from ..type_hints import ScorerType
 from .base import SLLinearBase
@@ -20,10 +20,10 @@ class LogisticRegression(SLLinearBase):
         random_state: int = 42,
         time_series: bool = False,
         verbose: int = 0,
-        device_type: str | None = None,
+        device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | ScorerType] = None,
+        eval_metric: Optional[Union[str, ScorerType]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -51,12 +51,11 @@ class LogisticRegression(SLLinearBase):
             ])
         
         if params['solver'] == 'saga':
-            params['penalty'] = trial.suggest_categorical("penalty", [None, 'l2', 'l1', 'elasticnet',])
+            params['penalty'] = trial.suggest_categorical("penalty", ['none', 'l2', 'l1', 'elasticnet',])
         elif params['solver'] == 'liblinear':
             params['penalty'] = trial.suggest_categorical("penalty", ['l2', 'l1',])
         else:
-            params['penalty'] = trial.suggest_categorical("penalty", ['l2', None,])
-            
+            params['penalty'] = trial.suggest_categorical("penalty", ['l2', 'none',])
         if params['penalty'] == 'elasticnet':
             params['l1_ratio'] = trial.suggest_float('l1_ratio', 0.0, 1.0)
 
@@ -69,10 +68,10 @@ class RidgeRegression(SLLinearBase):
         random_state: int = 42,
         time_series: bool = False,
         verbose: int = 0,
-        device_type: str | None = None,
+        device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | ScorerType] = None,
+        eval_metric: Optional[Union[str, ScorerType]] = None,
         **kwargs,
     ):
         super().__init__(

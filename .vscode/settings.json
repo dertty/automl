@@ -3,7 +3,8 @@
     "python.testing.pytestArgs": [
         "tests", 
         "-n", "auto",
-        "--disable-warnings"
+        "--disable-warnings",
+        "--testmon"
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,

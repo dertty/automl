@@ -1,6 +1,7 @@
 import warnings
 
 import numpy as np
+import pandas as pd
 from lightautoml.automl.presets.tabular_presets import (
     TabularAutoML,
     TabularUtilizedAutoML,
@@ -10,69 +11,75 @@ from lightautoml.validation.np_iterators import TimeSeriesIterator
 from torch import set_num_threads as set_num_threads_torch
 
 from ...loggers import get_logger
-from ..base_model import BaseModel
+from ..base import BaseModel
 from ..type_hints import FeaturesType, TargetType
 from ..utils import CatchLamaLogs, convert_to_pandas, seed_everything
 
+from typing import Optional, Callable, List, Union
 warnings.filterwarnings("ignore")
 
 
 log = get_logger(__name__)
 
-
-class TabularLama(BaseModel):
+class TabularLamaBase(BaseModel):
     def __init__(
         self,
-        timeout=60,
-        task="regression",
-        n_jobs=6,
-        random_state=42,
-        n_folds=5,
-        scorer=None,
-        verbose=1,
-        time_series=False,
+        model_type: str,
+        random_state: int = 42,
+        time_series: bool = False,
+        timeout: int = 60,
+        verbose: int = -1,
+        device_type: Optional[str] = None,
+        n_jobs: Optional[int] = None,
+        n_splits: int = 5,
+        eval_metric: Optional[Union[str, Callable]] = None,
+        **kwargs,
     ):
-
-        self.name = "TabularLama"
-
-        self.categorical_features = []
-        self.timeout = timeout
-        self.random_state = random_state
-        self.n_jobs = n_jobs
-        self.n_folds = n_folds
-        self.scorer = scorer
-        self.time_series = time_series
-
-        if task == "regression":
+        super().__init__(
+            model_type=model_type,
+            random_state=random_state,
+            time_series=time_series,
+            verbose=verbose,
+            device_type=device_type,
+            n_jobs=n_jobs,
+            n_splits=n_splits,
+            eval_metric=eval_metric,
+            )
+        
+        if self.model_type == 'classification':
+            self.task: str = 'binary'
+        elif self.model_type == 'regression':
             self.task = "reg"
-        else:
-            self.task = task
-
-        self.verbose = verbose
-
+            
+        self.timeout = timeout
+        self.n_folds = n_splits
+        
         set_num_threads_torch(self.n_jobs)
-
-    def fit(self, X: FeaturesType, y: TargetType, categorical_features=[]):
+        self._not_inner_model_params += ['timeout', 'task', 'n_folds', 'model_class']
+        
+    def _prepare(self, X: FeaturesType, y: Optional[TargetType] = None, categorical_feature: Optional[List[Union[str, int]]] = None):
+        seed_everything(self.random_state)
+        X, y = self._prepare_data(X, y, categorical_feature)
+        if y is not None:
+            X = X.assign(target=y)
+            if self.model_type == "classification":
+                self.num_class = np.unique(y).shape[0]
+                # correct objective based on the number of classes
+                if self.model_type == 'classification' and self.num_class > 2:
+                    self.task = "multiclass"
+            return X, y
+        return X
+        
+    def fit(self, X: FeaturesType, y: TargetType, categorical_feature: Optional[List[Union[str, int]]] = None):
         log.info(f"Fitting {self.name}", msg_type="start")
 
-        self.categorical_features = categorical_features
-        seed_everything(self.random_state)
+        data, _ = self._prepare(X, y, categorical_feature)
 
-        X = convert_to_pandas(X)
-        data = X.assign(target=y)
-
-        # adjust task in the case of classification
-        if self.task == "classification":
-            if np.unique(y).shape[0] == 2:
-                self.task = "binary"
-            else:
-                self.task = "multiclass"
-
-        model = TabularAutoML(
+        model = self.model_class(
             task=Task(
                 name=self.task,
-                metric=self.scorer.score,
-                greater_is_better=self.scorer.greater_is_better,
+                # metric=self.scorer.score,
+                # greater_is_better=self.scorer.greater_is_better,
             ),
             timeout=2 * self.timeout,
             cpu_limit=self.n_jobs,
@@ -84,8 +91,8 @@ class TabularLama(BaseModel):
         )
 
         roles = {"target": "target"}
-        if len(self.categorical_features) > 0:
-            roles["category"] = self.categorical_features
+        if len(self.categorical_feature) > 0:
+            roles["category"] = self.categorical_feature
 
         with CatchLamaLogs(log):
             if self.time_series:
@@ -112,23 +119,19 @@ class TabularLama(BaseModel):
 
         log.info(f"Fitting {self.name}", msg_type="end")
         return oof_preds
-
+    
     def tune(
-        self,
-        X: FeaturesType,
-        y: TargetType,
-        scorer=None,
-        timeout=None,
-        categorical_features=[],
-    ):
+        self, 
+        X: FeaturesType, y: TargetType, 
+        timeout: int = 60, 
+        categorical_feature: Optional[List[str]] = None,
+        ):
         self.timeout = timeout
-        self.scorer = scorer
-        self.categorical_features = categorical_features
-
-    def _predict(self, X_test):
-        X_test = convert_to_pandas(X_test)
-
-        y_pred = self.model.predict(X_test).data
+        self._prepare_categorical_features(X, categorical_feature)
+        
+    def _predict(self, X):
+        X = self._prepare(X, categorical_feature=self.categorical_feature)
+        y_pred = self.model.predict(X).data
 
         # flatten the output in regression case
         # and add 0 class probabilities in binary case
@@ -138,145 +141,122 @@ class TabularLama(BaseModel):
             y_pred = np.hstack((1 - y_pred, y_pred))
 
         return y_pred
-
+    
     @property
-    def params(self):
+    def inner_params(self):
         return {
-            "timeout": self.timeout,
-            "task": self.task,
-            "random_state": self.random_state,
-            "n_jobs": self.n_jobs,
-            "n_folds": self.n_folds,
-            "verbose": self.verbose,
         }
 
 
-class TabularLamaUtilized(BaseModel):
+class TabularLamaClassification(TabularLamaBase):
     def __init__(
         self,
-        timeout=60,
-        task="regression",
-        n_jobs=6,
-        random_state=42,
-        n_folds=5,
-        scorer=None,
-        time_series=False,
-        verbose=1,
+        random_state: int = 42,
+        time_series: bool = False,
+        timeout: int = 60,
+        verbose: int = -1,
+        device_type: Optional[str] = None,
+        n_jobs: Optional[int] = None,
+        n_splits: int = 5,
+        eval_metric: Optional[Union[str, Callable]] = None,
+        **kwargs,
     ):
-
-        self.name = "TabularLamaUtilized"
-
-        self.categorical_features = []
-        self.timeout = timeout
-        self.random_state = random_state
-        self.n_jobs = n_jobs
-        self.n_folds = n_folds
-        self.scorer = scorer
-        self.time_series = time_series
-
-        if task == "regression":
-            self.task = "reg"
-        else:
-            self.task = task
-
-        self.verbose = verbose
-
-        set_num_threads_torch(self.n_jobs)
-
-    def fit(self, X: FeaturesType, y: TargetType, categorical_features=[]):
-        log.info(f"Fitting {self.name}", msg_type="start")
-
-        self.categorical_features = categorical_features
-        seed_everything(self.random_state)
-
-        X = convert_to_pandas(X)
-        data = X.assign(target=y)
-
-        # adjust task in the case of classification
-        if self.task == "classification":
-            if np.unique(y).shape[0] == 2:
-                self.task = "binary"
-            else:
-                self.task = "multiclass"
-
-        model = TabularUtilizedAutoML(
-            task=Task(
-                name=self.task,
-                metric=self.scorer.score,
-                greater_is_better=self.scorer.greater_is_better,
-            ),
-            timeout=2 * self.timeout,
-            cpu_limit=self.n_jobs,
-            reader_params={
-                "n_jobs": 1,
-                "cv": self.n_folds,
-                "random_state": self.random_state,
-            },
-        )
-
-        roles = {"target": "target"}
-        if len(self.categorical_features) > 0:
-            roles["category"] = self.categorical_features
-
-        with CatchLamaLogs(log):
-            if self.time_series:
-                artificial_index = np.arange(X.shape[0])
-                oof_preds = model.fit_predict(
-                    data,
-                    roles=roles,
-                    verbose=self.verbose,
-                    cv_iter=TimeSeriesIterator(artificial_index),
-                ).data
-            else:
-                oof_preds = model.fit_predict(
-                    data, roles=roles, verbose=self.verbose
-                ).data
-
-        # flatten the output in regression case
-        # and add 0 class probabilities in binary case
-        if self.task == "reg":
-            oof_preds = oof_preds.reshape(oof_preds.shape[0])
-        elif self.task == "binary":
-            oof_preds = np.hstack((1 - oof_preds, oof_preds))
-
-        self.model = model
-
-        log.info(f"Fitting {self.name}", msg_type="end")
-        return oof_preds
-
-    def tune(
+        super().__init__(
+            model_type='classification',
+            random_state=random_state,
+            time_series=time_series,
+            timeout=timeout,
+            verbose=verbose,
+            device_type=device_type,
+            n_jobs=n_jobs,
+            n_splits=n_splits,
+            eval_metric=eval_metric,
+            **kwargs,
+            )
+        self.name: str = "TabularLama"
+        self.model_class = TabularAutoML
+        
+class TabularLamaRegression(TabularLamaBase):
+    def __init__(
         self,
-        X: FeaturesType,
-        y: TargetType,
-        scorer=None,
-        timeout=None,
-        categorical_features=[],
+        random_state: int = 42,
+        time_series: bool = False,
+        timeout: int = 60,
+        verbose: int = -1,
+        device_type: Optional[str] = None,
+        n_jobs: Optional[int] = None,
+        n_splits: int = 5,
+        eval_metric: Optional[Union[str, Callable]] = None,
+        **kwargs,
     ):
-        self.timeout = timeout
-        self.scorer = scorer
-        self.categorical_features = categorical_features
+        super().__init__(
+            model_type='regression',
+            random_state=random_state,
+            time_series=time_series,
+            timeout=timeout,
+            verbose=verbose,
+            device_type=device_type,
+            n_jobs=n_jobs,
+            n_splits=n_splits,
+            eval_metric=eval_metric,
+            **kwargs,
+            )
+        self.name: str = "TabularLama"
+        self.model_class = TabularAutoML
 
-    def _predict(self, X_test):
-        X_test = convert_to_pandas(X_test)
+class TabularLamaUtilizedClassification(TabularLamaBase):
+    def __init__(
+        self,
+        random_state: int = 42,
+        time_series: bool = False,
+        timeout: int = 60,
+        verbose: int = -1,
+        device_type: Optional[str] = None,
+        n_jobs: Optional[int] = None,
+        n_splits: int = 5,
+        eval_metric: Optional[Union[str, Callable]] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            model_type='classification',
+            random_state=random_state,
+            time_series=time_series,
+            timeout=timeout,
+            verbose=verbose,
+            device_type=device_type,
+            n_jobs=n_jobs,
+            n_splits=n_splits,
+            eval_metric=eval_metric,
+            **kwargs,
+            )
+        self.name: str = "TabularLamaUtilized"
+        self.model_class = TabularUtilizedAutoML
+        
 
-        y_pred = self.model.predict(X_test).data
-
-        # flatten the output in regression case
-        # and add 0 class probabilities in binary case
-        if self.task == "reg":
-            y_pred = y_pred.reshape(y_pred.shape[0])
-        elif self.task == "binary":
-            y_pred = np.hstack((1 - y_pred, y_pred))
-
-        return y_pred
-
-    @property
-    def params(self):
-        return {
-            "timeout": self.timeout,
-            "task": self.task,
-            "random_state": self.random_state,
-            "n_jobs": self.n_jobs,
-            "n_folds": self.n_folds,
-            "verbose": self.verbose,
-        }
+class TabularLamaUtilizedRegression(TabularLamaBase):
+    def __init__(
+        self,
+        random_state: int = 42,
+        time_series: bool = False,
+        timeout: int = 60,
+        verbose: int = -1,
+        device_type: Optional[str] = None,
+        n_jobs: Optional[int] = None,
+        n_splits: int = 5,
+        eval_metric: Optional[Union[str, Callable]] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            model_type='regression',
+            random_state=random_state,
+            time_series=time_series,
+            timeout=timeout,
+            verbose=verbose,
+            device_type=device_type,
+            n_jobs=n_jobs,
+            n_splits=n_splits,
+            eval_metric=eval_metric,
+            **kwargs,
+            )
+        self.name: str = "TabularLamaUtilized"
+        self.model_class = TabularUtilizedAutoML

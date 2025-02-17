@@ -5,7 +5,7 @@ import numpy as np
 from automl.model.catboost import CatBoostClassification, CatBoostRegression
 from catboost import CatBoostClassifier as CBClass, CatBoostRegressor as CBReg
 
-from ..test_model import sample_data, sample_unbalanced_data
+from ..test_models import sample_data, sample_unbalanced_data
 from unittest.mock import patch, MagicMock
 
 

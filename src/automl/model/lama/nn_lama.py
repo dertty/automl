@@ -7,7 +7,7 @@ from lightautoml.validation.np_iterators import TimeSeriesIterator
 from torch import set_num_threads as set_num_threads_torch
 
 from ...loggers import get_logger
-from ..base_model import BaseModel
+from ..base import BaseModel
 from ..type_hints import FeaturesType, TargetType
 from ..utils import CatchLamaLogs, convert_to_pandas, seed_everything
 

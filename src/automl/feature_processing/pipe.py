@@ -5,16 +5,14 @@ from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import(
     OneHotEncoder,
-    TargetEncoder, 
+    # TargetEncoder, 
     OrdinalEncoder,
     StandardScaler,
     MinMaxScaler,
     QuantileTransformer
 )
-from feature_engine.outliers import Winsorizer
-from feature_engine.selection import DropHighPSIFeatures
 from .selectors import NanFeatureSelector, QConstantFeatureSelector, ObjectColumnsSelector
-from .transformers import AdversarialTestTransformer, CorrFeaturesTransformer, DropHighPSITransformer, CorrFeaturesTransformerFast, WinsorizerFast
+from .transformers import AdversarialTestTransformer, DropHighPSITransformer, CorrFeaturesTransformerFast, WinsorizerFast
 from ..loggers import get_logger, catchstdout
 log = get_logger(__name__)
 
@@ -92,7 +90,7 @@ class PreprocessingPipeline(Pipeline):
         obj_encoders_dict = {
             'ohe':('OneHotEncoder', OneHotEncoder(sparse_output=False, drop='first', handle_unknown='ignore', dtype=np.int16), ObjectColumnsSelector(mode='ohe')),
             'oe':('OrdinalEncoder', OrdinalEncoder(handle_unknown='use_encoded_value', encoded_missing_value=-1, unknown_value=-1, min_frequency=self.oe_min_freq, dtype=np.int16), ObjectColumnsSelector(mode='oe')),
-            'mte':('MeanTargetEncoder', TargetEncoder(target_type='auto'), ObjectColumnsSelector(mode='mte'))
+            # 'mte':('MeanTargetEncoder', TargetEncoder(target_type='auto'), ObjectColumnsSelector(mode='mte'))
             }
         num_encoders_dict = {
             'ss':('StandardScaler', StandardScaler(), make_column_selector(dtype_include="number")),

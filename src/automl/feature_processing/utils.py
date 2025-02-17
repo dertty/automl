@@ -5,7 +5,7 @@ from feature_engine.selection.base_selector import BaseSelector
 from feature_engine.dataframe_checks import (
     _check_contains_inf,
     _check_contains_na,
-    check_X,
+    # check_X,
 )
 
 def find_correlated_features(

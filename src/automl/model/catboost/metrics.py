@@ -1,5 +1,9 @@
 import numpy as np
-from sklearn.metrics import get_scorer_names
+# from sklearn.metrics import get_scorer_names
+from sklearn.metrics import SCORERS
+
+def get_scorer_names():
+    return list(SCORERS.keys())
 
 
 METRICS_GREATER_IS_BETTER = {

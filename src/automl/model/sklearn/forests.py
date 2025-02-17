@@ -3,7 +3,7 @@ from sklearn.ensemble import ExtraTreesRegressor as EXRegSklearn
 from sklearn.ensemble import RandomForestClassifier as RFClassSklearn
 from sklearn.ensemble import RandomForestRegressor as RFRegSklearn
 
-from typing import Optional
+from typing import Optional, Union
 
 from ...loggers import get_logger
 from ..type_hints import ScorerType
@@ -19,10 +19,10 @@ class ExtraTreesClassification(SLForestBase):
         random_state: int = 42,
         time_series: bool = False,
         verbose: int = 0,
-        device_type: str | None = None,
+        device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | ScorerType] = None,
+        eval_metric: Optional[Union[str, ScorerType]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -41,8 +41,12 @@ class ExtraTreesClassification(SLForestBase):
     @staticmethod   
     def get_trial_params(trial):
         params = SLForestBase.get_base_trial_params(trial)
-        params["criterion"] = trial.suggest_categorical("criterion", ["gini", "entropy", "log_loss"])
-        params["class_weight"] = trial.suggest_categorical("class_weight", ["balanced", "balanced_subsample"])
+        params["criterion"] = trial.suggest_categorical("criterion", [
+            "gini", 
+            "entropy", 
+            # "log_loss", # log_loss is not supported by ExtraTreesClassifier in 0.24.2
+            ])
+        params["class_weight"] = trial.suggest_categorical("class_weight", ["balanced", "balanced_subsample", None])
         return params
 
 
@@ -52,10 +56,10 @@ class ExtraTreesRegression(SLForestBase):
         random_state: int = 42,
         time_series: bool = False,
         verbose: int = 0,
-        device_type: str | None = None,
+        device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | ScorerType] = None,
+        eval_metric: Optional[Union[str, ScorerType]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -76,17 +80,18 @@ class ExtraTreesRegression(SLForestBase):
         params = SLForestBase.get_base_trial_params(trial)
 
         return params
-    
+
+   
 class RandomForestClassification(SLForestBase):
     def __init__(
         self,
         random_state: int = 42,
         time_series: bool = False,
         verbose: int = 0,
-        device_type: str | None = None,
+        device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | ScorerType] = None,
+        eval_metric: Optional[Union[str, ScorerType]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -105,8 +110,12 @@ class RandomForestClassification(SLForestBase):
     @staticmethod   
     def get_trial_params(trial):
         params = SLForestBase.get_base_trial_params(trial)
-        params["criterion"] = trial.suggest_categorical("criterion", ["gini", "entropy", "log_loss"])
-        params["class_weight"] = trial.suggest_categorical("class_weight", ["balanced", "balanced_subsample"])
+        params["criterion"] = trial.suggest_categorical("criterion", [
+            "gini", 
+            "entropy", 
+            # "log_loss", # log_loss is not supported by RandomForestClassifier in 0.24.2
+            ])
+        params["class_weight"] = trial.suggest_categorical("class_weight", ["balanced", "balanced_subsample", None])
         return params
 
 
@@ -116,10 +125,10 @@ class RandomForestRegression(SLForestBase):
         random_state: int = 42,
         time_series: bool = False,
         verbose: int = 0,
-        device_type: str | None = None,
+        device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | ScorerType] = None,
+        eval_metric: Optional[Union[str, ScorerType]] = None,
         **kwargs,
     ):
         super().__init__(

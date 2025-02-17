@@ -7,7 +7,7 @@ from feature_engine.outliers import Winsorizer
 from sklearn.ensemble._bagging import _generate_indices
 from sklearn.model_selection._validation import _aggregate_score_dicts
 from sklearn.utils import Bunch, _safe_indexing, check_array, check_random_state
-from sklearn.utils.parallel import Parallel, delayed
+from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import mean_absolute_error
 from catboost import CatBoostClassifier, Pool

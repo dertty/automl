@@ -2,9 +2,9 @@ import numpy as np
 from sklearn.utils import compute_sample_weight
 import xgboost as xgb
 
-from typing import Any, Optional, Callable, Union, List
+from typing import Any, Optional, Callable, Union, List, Dict
 from ...loggers import get_logger
-from ..base_model import BaseModel
+from ..base import BaseModel
 from ..type_hints import FeaturesType, TargetType
 from ..utils import tune_optuna
 from ..utils.model_utils import get_splitter, get_epmty_array
@@ -57,9 +57,9 @@ class XGBBase(BaseModel):
         self.max_iterations: int = self.num_boost_round
         self.early_stopping_rounds: int = kwargs.pop('early_stopping_rounds', 100)
         # fit params
-        self.models: list[xgb.core.Booster] | None = None
+        self.models: Optional[List[xgb.core.Booster]] = None
         self.class_weight = kwargs.pop('class_weight', 'balanced')
-        self.num_class: int | None = None
+        self.num_class: Optional[int] = None
         if isinstance(self.eval_metric, str):
             self.eval_metric: Optional[str] = self.eval_metric.lower()
         elif callable(self.eval_metric):
@@ -69,7 +69,7 @@ class XGBBase(BaseModel):
         for k, v in kwargs.items():
             setattr(self, k, v)
     
-    def _prepare(self, X: FeaturesType, y: TargetType | None = None, categorical_feature: Optional[List[str]] = None):
+    def _prepare(self, X: FeaturesType, y: Optional[TargetType] = None, categorical_feature: Optional[List[str]] = None):
         X, y = self._prepare_data(X, y, categorical_feature or [])
         X.loc[:, self.categorical_feature] = X[self.categorical_feature].astype("category")
         if y is not None:
@@ -86,7 +86,7 @@ class XGBBase(BaseModel):
         self, 
         X_train: FeaturesType, y_train: TargetType,
         X_test: FeaturesType, y_test: TargetType,
-        inner_params: dict[Any, Any] = {},
+        inner_params: Dict[Any, Any] = {},
         ):
         # add class weights
         # in binary case -> `scale_pos_weight`
@@ -154,7 +154,6 @@ class XGBBase(BaseModel):
             preds = fold_model.predict(dtest)
             if self.model_type == "classification" and preds.ndim == 1:
                 preds = np.vstack((1 - preds, preds)).T
-            print(preds.shape, oof_preds.shape)
             oof_preds[test_idx] = preds
             self.models.append(fold_model)
 
@@ -317,10 +316,10 @@ class XGBClassification(XGBBase):
         random_state: int = 42,
         time_series: bool = False,
         verbose: int = 0,
-        device_type: str | None = None,
+        device_type: Optional[str] = None,
         n_jobs: int = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | Callable] = None,
+        eval_metric: Optional[Union[str, Callable]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -348,10 +347,10 @@ class XGBRegression(XGBBase):
         random_state: int = 42,
         time_series: bool = False,
         verbose: int = 0,
-        device_type: str | None = None,
+        device_type: Optional[str] = None,
         n_jobs: int = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | Callable] = None,
+        eval_metric: Optional[Union[str, Callable]] = None,
         **kwargs,
     ):
         super().__init__(
