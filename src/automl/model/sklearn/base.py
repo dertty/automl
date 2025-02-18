@@ -3,9 +3,9 @@ from sklearn.model_selection import cross_validate
 from sklearn.base import BaseEstimator
 from sklearn.metrics import get_scorer
 
-from typing import Any, Optional, List, Dict
+from typing import Any, Optional, List, Dict, Union
 from ...loggers import get_logger
-from ..base_model import BaseModel
+from ..base import BaseModel
 from ..type_hints import FeaturesType, TargetType, ScorerType
 from ..utils import tune_optuna
 from ..utils.model_utils import get_splitter, get_epmty_array
@@ -25,7 +25,7 @@ class SKBase(BaseModel):
         device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | ScorerType] = None,
+        eval_metric: Optional[Union[str, ScorerType]] = None,
     ):
         super().__init__(
             model_type=model_type,
@@ -75,17 +75,14 @@ class SKBase(BaseModel):
         fold_model = self.model(**inner_params)
         fold_model = fold_model.fit(X_train, y_train)
         fold_preds = getattr(fold_model, self.model_predict_func_name)(X_test)
-        print('1@@@@@@@', self.model_type, self.model_predict_func_name, self.num_class)
         if self.model_type == "classification" and self.num_class == 2:
-            print('2@@@@@@@', self.model_type, self.model_predict_func_name, self.num_class)
             score = self.eval_metric._score_func(y_test, fold_preds[:, 1])
         else:
-            print('3@@@@@@@', self.model_type, self.model_predict_func_name, self.num_class)
             score = self.eval_metric._score_func(y_test, fold_preds)
         
         return fold_model, score, fold_preds
     
-    def fit(self, X: FeaturesType, y: TargetType, categorical_feature: Optional[list[str]] = None):
+    def fit(self, X: FeaturesType, y: TargetType, categorical_feature: Optional[List[str]] = None):
         log.info(f"Fitting {self.name}", msg_type="start")
 
         X, y = self._prepare(X, y, categorical_feature)
@@ -110,23 +107,30 @@ class SKBase(BaseModel):
     def optuna_objective(self, trial, X: FeaturesType, y: TargetType):
         kf = get_splitter(self.model_type, n_splits=self.n_splits, time_series=self.time_series, random_state=self.random_state)
         cv = kf.split(X, y)
-        p = {**self.not_tuned_params, **self.get_trial_params(trial)}
-        print(p)
-        model = self.model(**p)
-        scores = cross_validate(
-            model,
-            X, y,
-            scoring=self.eval_metric,
-            cv=cv,
-        )
-        return np.mean(scores["test_score"])
+        inner_params = {**self.not_tuned_params, **self.get_trial_params(trial),}
+        
+        # В sklearn 0.24.2 нет возможности передать scorer в cross_validate
+        # scores = cross_validate(
+        #     model,
+        #     X, y,
+        #     scoring=self.eval_metric,
+        #     cv=cv,)
+        scores = []
+        for i, (train_idx, test_idx) in enumerate(cv):
+            X_train, y_train, X_test, y_test = self._get_train_test_data(X, y, train_idx, test_idx)
+            _, score, _ = self.fit_fold(
+                X_train, y_train,
+                X_test, y_test,
+                inner_params=inner_params)
+            scores.append(score)
+        return np.mean(scores)
 
     def tune(
         self,
         X: FeaturesType,
         y: TargetType,
         timeout: int=60,
-        categorical_feature: Optional[list[str]] = None,
+        categorical_feature: Optional[List[str]] = None,
     ):
         log.info(f"Tuning {self.name}", msg_type="start")
             
@@ -184,7 +188,7 @@ class SLForestBase(SKBase):
         device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | ScorerType] = None,
+        eval_metric: Optional[Union[str, ScorerType]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -215,7 +219,7 @@ class SLForestBase(SKBase):
             "bootstrap": trial.suggest_categorical("bootstrap", [True, False])
         }
         if param_distr["bootstrap"]:
-            param_distr['max_samples'] = trial.suggest_float("max_samples", 0.01, 1)
+            param_distr['max_samples'] = trial.suggest_float("max_samples", 0.5, 1)
             param_distr['oob_score'] = trial.suggest_categorical("oob_score", [True, False])
         return param_distr
         
@@ -231,7 +235,7 @@ class SLLinearBase(SKBase):
         device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | ScorerType] = None,
+        eval_metric: Optional[Union[str, ScorerType]] = None,
         **kwargs,
     ):
         super().__init__(

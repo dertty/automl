@@ -8,7 +8,7 @@ from automl.model.lightgbm import LightGBMClassification, LightGBMRegression
 from automl.model.lightgbm.lightgbm import LightGBMBase
 
 
-from ..test_model import sample_data, sample_unbalanced_data
+from ..test_models import sample_data, sample_unbalanced_data
 
 
 def test_classification_init():

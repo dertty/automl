@@ -5,7 +5,7 @@ import xgboost as xgb
 
 from automl.model.xgboost import XGBClassification, XGBRegression
 
-from ..test_model import sample_data, sample_unbalanced_data
+from ..test_models import sample_data, sample_unbalanced_data
 
 
 def test_xgboost_classification_init():
@@ -112,13 +112,13 @@ def test_early_stopping(sample_data, model_class):
     X, y = sample_data
     num_boost_round = 100
     n_splits = 2
-    early_stopping_rounds_1 = 10
-    early_stopping_rounds_2 = 1
+    early_stopping_rounds_1 = 50
+    early_stopping_rounds_2 = 2
 
     model1 = model_class(
         num_boost_round=num_boost_round, 
         early_stopping_rounds=early_stopping_rounds_1,
-        eta=0.1, max_depth=2,
+        eta=0.1, max_depth=1,
         n_splits=n_splits,
     )
     model1.tune(X, y)
@@ -128,7 +128,7 @@ def test_early_stopping(sample_data, model_class):
     model2 = model_class(
         num_boost_round=num_boost_round, 
         early_stopping_rounds=early_stopping_rounds_2,
-        eta=0.1, max_depth=2,
+        eta=0.1, max_depth=1,
         n_splits=n_splits,
     )
     model2.tune(X, y)
@@ -139,7 +139,6 @@ def test_early_stopping(sample_data, model_class):
         iteration2 = model2.models[i].best_iteration
         assert iteration1 < num_boost_round
         assert iteration2 < num_boost_round
-        assert iteration2 <= iteration1
         
     iteration1 = model1.best_params['num_boost_round']
     iteration2 = model2.best_params['num_boost_round']

@@ -6,9 +6,7 @@ authors = [
     {name = "Aleksandr Ivanov", email = "alex.iv.vad@gmail.com"},
 ]
 dependencies = [
-    "polars>=1.12.0",
     "pandas<=2.0.0",
-    "scikit-learn>=1.5.2",
     "optuna>=4.0.0",
     "catboost>=1.2.7",
     "lightgbm>=3.2.1",
@@ -18,11 +16,12 @@ dependencies = [
     "transformers>=4.46.1",
     "gensim>=4.3.3",
     "nltk>=3.9.1",
-    "feature-engine>=1.6.2",
-    "numba>=0.60.0",
-    "nbformat>=4.2.0",
+    "numba>=0.58.1",
+    "polars>=1.8.2",
+    "feature-engine>=1.2.0",
+    "scikit-learn>=0.24.2",
 ]
-requires-python = "==3.11.*"
+requires-python = ">=3.8,<3.12"
 readme = "README.md"
 license = {text = "MIT"}
 
@@ -51,4 +50,5 @@ dev = [
     "clearml>=1.16.5",
     "pytest>=8.3.3",
     "pytest-xdist>=3.6.1",
+    "pytest-testmon>=2.1.3",
 ]

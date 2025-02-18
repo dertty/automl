@@ -170,3 +170,6 @@ ml_data
 .devcontainer/devcontainer.json
 data
 catboost_info
+.testmondata*
+.python-version
+pdm.lock

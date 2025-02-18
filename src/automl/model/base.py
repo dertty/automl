@@ -55,16 +55,19 @@ class BaseModel:
             '_not_inner_model_params', 'model_type', 'model',
             'model_predict_func_name'
             ]
-        
-    def _prepare_data(self, X: FeaturesType, y: Optional[TargetType] = None, categorical_feature: Optional[List[Union[str, int]]] = None):
+    
+    def _prepare_categorical_features(self, X: FeaturesType, categorical_feature: Optional[List[Union[str, int]]] = None):
         categorical_feature = categorical_feature or []
         if not isinstance(X, pd.DataFrame):
             self.categorical_feature = [f"column_{i}" for i in categorical_feature if i < len(X)]
         else:
             self.categorical_feature = [col for col in categorical_feature if col in X.columns]
+             
+    def _prepare_data(self, X: FeaturesType, y: Optional[TargetType] = None, categorical_feature: Optional[List[Union[str, int]]] = None):
+        self._prepare_categorical_features(X, categorical_feature)
         X = convert_to_pandas(X)
         if y is not None:
-            y = convert_to_numpy(y)
+            # y = convert_to_numpy(y)
             if y.ndim == 1:
                 y = y.reshape(-1)
             elif y.ndim == 2 and y.shape[1] == 1:
@@ -83,7 +86,7 @@ class BaseModel:
         Parameters:
         X (FeaturesType): The input features.
         y (TargetType): The target values.
-        categorical_feature (list[str]): List of categorical features.
+        categorical_feature (List[str]): List of categorical features.
 
         Raises:
         NotImplementedError: This method should be implemented by subclasses.
@@ -98,7 +101,7 @@ class BaseModel:
         X (FeaturesType): The input features.
         y (TargetType): The target values.
         timeout (int): The maximum time allowed for tuning.
-        categorical_feature (list[str]): List of categorical features.
+        categorical_feature (List[str]): List of categorical features.
 
         Raises:
         NotImplementedError: This method should be implemented by subclasses.
@@ -159,9 +162,13 @@ class BaseModel:
         ### BUG
         # if isinstance(Xs, FeaturesType):
         # TypeError: Subscripted generics cannot be used with class and instance checks in < python3.10
-        if self.models is None or self.models == []:
+        if not hasattr(self, 'models') and not hasattr(self, 'model'):
             raise ValueError("The model has not been fitted yet. Please call the `fit` method before `predict`.")
-        
+        if hasattr(self, 'models') and (self.models is None or self.models == []):
+            raise ValueError("The model has not been fitted yet. Please call the `fit` method before `predict`.")
+        if hasattr(self, 'model') and self.model is None:
+            raise ValueError("The model has not been fitted yet. Please call the `fit` method before `predict`.")
+            
         # If Xs is not a list or the model is a Blender, perform a single prediction
         if not isinstance(Xs, list) or self.name == "Blender":
             return self._predict(Xs)

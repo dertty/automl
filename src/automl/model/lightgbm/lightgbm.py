@@ -1,9 +1,9 @@
 import lightgbm as lgb
 import numpy as np
 
-from typing import Any, Optional, List, Dict, Callable
+from typing import Any, Optional, List, Dict, Callable, Union
 from ...loggers import get_logger
-from ..base_model import BaseModel
+from ..base import BaseModel
 from ..type_hints import FeaturesType, TargetType
 from ..utils import tune_optuna
 from ..utils.model_utils import get_splitter, get_epmty_array
@@ -22,7 +22,7 @@ class LightGBMBase(BaseModel):
         device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | Callable] = None,
+        eval_metric: Optional[Union[str, Callable]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -95,7 +95,7 @@ class LightGBMBase(BaseModel):
         result = result or default_value
         return result, kwargs
         
-    def _prepare(self, X: FeaturesType, y: Optional[TargetType] = None, categorical_feature: Optional[list[str]] = None):
+    def _prepare(self, X: FeaturesType, y: Optional[TargetType] = None, categorical_feature: Optional[List[str]] = None):
         X, y = self._prepare_data(X, y, categorical_feature)
         if y is not None:
             if self.model_type == "classification":
@@ -175,7 +175,7 @@ class LightGBMBase(BaseModel):
             best_score: float = value
         return fold_model, best_score
     
-    def fit(self, X: FeaturesType, y: TargetType, categorical_feature: Optional[list[str]] = None):
+    def fit(self, X: FeaturesType, y: TargetType, categorical_feature: Optional[List[str]] = None):
         log.info(f"Fitting {self.name}", msg_type="start")
 
         X, y = self._prepare(X, y, categorical_feature or [])
@@ -262,7 +262,7 @@ class LightGBMBase(BaseModel):
         X: FeaturesType,
         y: TargetType,
         timeout: int=60,
-        categorical_feature: Optional[list[str]] = None,
+        categorical_feature: Optional[List[str]] = None,
     ):
         log.info(f"Tuning {self.name}", msg_type="start")
 
@@ -342,10 +342,10 @@ class LightGBMClassification(LightGBMBase):
         random_state: int = 42,
         time_series: bool = False,
         verbose: int = -1,
-        device_type: str | None = None,
+        device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | Callable] = None,
+        eval_metric: Optional[Union[str, Callable]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -375,10 +375,10 @@ class LightGBMRegression(LightGBMBase):
         random_state: int = 42,
         time_series: bool = False,
         verbose: int = -1,
-        device_type: str | None = None,
+        device_type: Optional[str] = None,
         n_jobs: Optional[int] = None,
         n_splits: int = 5,
-        eval_metric: Optional[str | Callable] = None,
+        eval_metric: Optional[Union[str, Callable]] = None,
         **kwargs,
     ):
         super().__init__(

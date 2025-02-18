@@ -7,14 +7,12 @@ from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import(
     OneHotEncoder,
-    TargetEncoder, 
+    # TargetEncoder, 
     OrdinalEncoder,
     StandardScaler,
     MinMaxScaler,
     QuantileTransformer
 )
-from feature_engine.outliers import Winsorizer
-from feature_engine.selection import DropHighPSIFeatures
 from .selectors import NanFeatureSelector, QConstantFeatureSelector, ObjectColumnsSelector
 from .selectors import nan_col_selector, qconst_col_selector
 from .transformers import AdversarialTestTransformer, CorrFeaturesTransformer, DropHighPSITransformer, CorrFeaturesTransformerFast, WinsorizerFast

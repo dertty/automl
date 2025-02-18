@@ -1,5 +1,7 @@
 from .catboost import CatBoostClassification, CatBoostRegression
-from .lama import TabularLama, TabularLamaNN, TabularLamaUtilized
+from .lama import TabularLamaClassification, TabularLamaRegression
+from .lama import TabularLamaUtilizedClassification, TabularLamaUtilizedRegression
+from .lama import TabularLamaNN
 from .lightgbm import LightGBMClassification, LightGBMRegression
 from .sklearn import (
     ExtraTreesClassification,
@@ -43,12 +45,12 @@ boosting_models = {
 
 lama_models = {
     "regression": [
-        (TabularLama, {"task": "regression"}),
-        (TabularLamaUtilized, {"task": "regression"}),
+        TabularLamaRegression,
+        TabularLamaUtilizedRegression,
     ],
     "classification": [
-        (TabularLama, {"task": "classification"}),
-        (TabularLamaUtilized, {"task": "classification"}),
+        TabularLamaClassification,
+        TabularLamaUtilizedClassification,
     ],
 }
 
@@ -75,13 +77,13 @@ all_models = {
     "regression": linear_models["regression"]
     + forest_models["regression"]
     + boosting_models["regression"]
-    + lama_models["regression"]
-    + lama_nn_models["regression"],
+    + lama_models["regression"],
+    # + lama_nn_models["regression"],
     "classification": linear_models["classification"]
     + forest_models["classification"]
     + boosting_models["classification"]
-    + lama_models["classification"]
-    + lama_nn_models["classification"],
+    + lama_models["classification"],
+    # + lama_nn_models["classification"],
 }
 
 
@@ -104,11 +106,4 @@ NAMES_MODELS_MAPPING = {
         "regression": [XGBRegression],
         "classification": [XGBClassification,],
     },
-    "test": {
-        "regression": [LightGBMClassification, CatBoostRegression],
-        "classification": [XGBClassification,
-                        #    LightGBMClassification, 
-                           CatBoostClassification,
-                           ],
-    }
 }

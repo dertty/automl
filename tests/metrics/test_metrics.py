@@ -1,8 +1,12 @@
 import pytest
 import numpy as np
-from sklearn.metrics import get_scorer_names, make_scorer
+# from sklearn.metrics import get_scorer_names, make_scorer
 from automl.metrics import get_scorer
 
+from sklearn.metrics import SCORERS
+
+def get_scorer_names():
+    return list(SCORERS.keys())
 
 # Получаем все доступные метрики sklearn
 available_metrics = [score for score in get_scorer_names() if score not in ['neg_mean_gamma_deviance', 'neg_mean_poisson_deviance',]]

@@ -357,7 +357,6 @@ class AutoModel:
         return y_pred
 
     def evaluate(self, y_true: TargetType, y_pred: TargetType):
-        print(y_true.shape, y_pred.shape)
         if self.task == "classification":
             # binary classifiation
             if len(np.unique(y_true)) <= 2:

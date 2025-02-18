@@ -7,7 +7,7 @@ from feature_engine.selection.base_selector import BaseSelector
 from feature_engine.dataframe_checks import (
     _check_contains_inf,
     _check_contains_na,
-    check_X,
+    # check_X,
 )
 
 from automl.utils.utils import ArrayType
@@ -220,7 +220,7 @@ class SmartCorrelatedSelectionFast(BaseSelector):
     def fit(self, X: pd.DataFrame, y: pd.Series = None):
 
         # check input dataframe
-        X = check_X(X)
+        # X = check_X(X)
 
         self.variables_ = X.select_dtypes(include="number").columns.tolist()
 

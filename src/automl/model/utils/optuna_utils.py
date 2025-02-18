@@ -92,7 +92,6 @@ def tune_optuna(
     n_jobs=1,
     **kwargs,
 ):
-
     # seed sampler for reproducibility
     sampler = optuna.samplers.TPESampler(seed=random_state)
 
