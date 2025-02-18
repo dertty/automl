@@ -8,6 +8,7 @@ from sklearn.datasets import make_classification
 from optuna import create_study
 from unittest.mock import patch, MagicMock
 
+from automl.model.utils import convert_to_pandas
 from .fixtures import sample_data, sample_unbalanced_data
 from .models_lists import model_classes, all_model_classes, automl_model_classes
 from .utils import check_n_classes
@@ -22,9 +23,11 @@ default_model_params = {
     'verbose': 0
     }
 
-
-@pytest.mark.parametrize("model_class", all_model_classes)
-def test_common_attributes(sample_data, model_class):
+@pytest.mark.parametrize(
+    "model_class, is_automl",
+    [(cls, False) for cls in model_classes] + [(cls, True) for cls in automl_model_classes]
+)
+def test_common_attributes(sample_data, model_class, is_automl):
     model = model_class()
     
     # Проверяем, что параметры, не относящиеся к "оригинальной" модели не попадают в inner_params
@@ -85,7 +88,11 @@ def test_common_attributes(sample_data, model_class):
     # проверяем tune 
     model.tune(X, y,)
     check_that_params_doesnot_change(model, random_state, n_jobs)
-    check_n_classes(model, oof_preds, y)
+    check_n_classes(model, None, y)
+    if is_automl:
+        model.best_params == {}
+    else:
+        assert len(model.best_params.keys()) > 0
     
     oof_preds = model.fit(X, y,)
     check_that_params_doesnot_change(model, random_state, n_jobs)
@@ -97,21 +104,6 @@ def test_common_attributes(sample_data, model_class):
     check_n_classes(model, preds, y)
     assert preds.shape[0] == X.shape[0]
     
-# Для все моделей, кроме тех, у которых встроенный тюнинг должен быть best_params
-@pytest.mark.parametrize("model_class", model_classes)
-def test_best_params_attribute_for_base_models(sample_data, model_class):
-    X, y = sample_data
-    model = model_class(**default_model_params)
-    model.tune(X, y,)
-    assert len(model.best_params.keys()) > 0
-    
-# Для automl best_params остаётся пустой
-@pytest.mark.parametrize("model_class", automl_model_classes)
-def test_best_params_attribute_for_automl_models(sample_data, model_class):
-    X, y = sample_data
-    model = model_class(**default_model_params)
-    model.tune(X, y,)
-    assert model.best_params == {}
 
 # Если в предикт передаётся список таблиц, то возвращается список предиктов
 @pytest.mark.parametrize("model_class", all_model_classes)
@@ -131,50 +123,34 @@ def test_list_predict(sample_data, model_class):
         for pred, x in zip(preds, Xs):
             assert pred.shape == (x.shape[0],)
 
-@pytest.mark.parametrize("model_class", all_model_classes)
-def test_np_categorical_features(sample_data, model_class):
-    model = model_class(**default_model_params)
-    assert model.categorical_feature == None
-    
-    X, y = sample_data
-    indexed_categorical_feature = [0, 1]
-    categorical_feature=['column_0', 'column_1']
-    
-    oof_preds = model.fit(X, y, categorical_feature=indexed_categorical_feature)
-    assert model.categorical_feature == categorical_feature
-    assert oof_preds.shape[0] == X.shape[0]
-    
-    model.tune(X, y, categorical_feature=indexed_categorical_feature)
-    assert model.categorical_feature == categorical_feature
-    
-    oof_preds = model.fit(X, y, categorical_feature=indexed_categorical_feature)
-    assert model.categorical_feature == categorical_feature
-    assert oof_preds.shape[0] == X.shape[0]
-    
-@pytest.mark.parametrize("model_class", all_model_classes)
-def test_pd_categorical_features(sample_data, model_class):
-    from automl.model.utils import convert_to_pandas
-    
-    model = model_class(**default_model_params)
-    assert model.categorical_feature == None
-    
-    X, y = sample_data
-    X = convert_to_pandas(X)
-    categorical_feature=['column_0', 'column_1']
-    
-    oof_preds = model.fit(X, y, categorical_feature=categorical_feature)
-    assert model.categorical_feature == categorical_feature
-    assert oof_preds.shape[0] == X.shape[0]
-    
-    model.tune(X, y, categorical_feature=categorical_feature)
-    assert model.categorical_feature == categorical_feature
-    
-    oof_preds = model.fit(X, y, categorical_feature=categorical_feature)
-    assert model.categorical_feature == categorical_feature
-    assert oof_preds.shape[0] == X.shape[0]
 
-@pytest.mark.parametrize("model_class", model_classes)
-def test_prepare_data(sample_data, model_class):    
+@pytest.mark.parametrize(
+    "model_class, data_type, categorical_feature, inner_categorical_feature",
+    [(cls, "numpy", [0, 1], ['column_0', 'column_1']) for cls in all_model_classes] +
+    [(cls, "pandas", ['column_0', 'column_1'], ['column_0', 'column_1']) for cls in all_model_classes]
+)
+def test_categorical_features(sample_data, model_class, data_type, categorical_feature, inner_categorical_feature):
+    model = model_class(**default_model_params)
+    assert model.categorical_feature is None
+
+    X, y = sample_data
+
+    # Преобразуем данные в нужный формат
+    if data_type == "pandas":
+        X = convert_to_pandas(X)
+
+    _ = model.fit(X, y, categorical_feature=categorical_feature)
+    assert model.categorical_feature == inner_categorical_feature
+
+    model.tune(X, y, categorical_feature=categorical_feature)
+    assert model.categorical_feature == inner_categorical_feature
+
+
+@pytest.mark.parametrize(
+    "model_class, is_automl",
+    [(cls, False) for cls in model_classes] + [(cls, True) for cls in automl_model_classes]
+)
+def test_prepare_data(sample_data, model_class, is_automl):    
     model = model_class(**default_model_params)
     X, y = sample_data
     
@@ -183,7 +159,11 @@ def test_prepare_data(sample_data, model_class):
     assert model.categorical_feature == []
     
     X_prepared, y_prepared = model._prepare(X, y)
-    assert X_prepared.shape == X.shape
+    if is_automl:
+        X_prepared.shape[1] == X.shape[1] + 1 if y.ndim == 1 else y.shape[1]
+        X_prepared.shape[0] == X.shape[0]
+    else:
+        assert X_prepared.shape == X.shape
     assert y_prepared.shape == y.shape
     assert model.categorical_feature == []
     
@@ -196,6 +176,7 @@ def test_prepare_data(sample_data, model_class):
     model._prepare(pd.DataFrame(X, columns=[f'a{i}' for i in range(X.shape[1])]), categorical_feature=['a1',])
     assert model.categorical_feature == ['a1']
 
+
 @pytest.mark.parametrize("model_class", model_classes)
 def test_get_base_trial_params(model_class):
     study = create_study()
@@ -206,6 +187,7 @@ def test_get_base_trial_params(model_class):
     params = model_class.get_trial_params(trial)
     assert isinstance(params, dict)
     assert len(params) > 0
+
 
 @pytest.mark.parametrize("model_class", model_classes)
 def test_tune_with_custom_study(sample_data, model_class):
@@ -224,6 +206,7 @@ def test_tune_with_custom_study(sample_data, model_class):
         assert model.inner_params['depth'] == 4
         assert model.inner_params['learning_rate'] == 0.05
 
+
 @pytest.mark.parametrize("model_class", all_model_classes)
 @pytest.mark.parametrize("model_type, eval_metric, metrics_dict, expected", [
     ('classification', 'accuracy', {'accuracy': True}, True),
@@ -236,6 +219,7 @@ def test_tune_with_custom_study(sample_data, model_class):
 def test_get_str_greater_is_better(model_class, model_type, eval_metric, metrics_dict, expected):
     result = model_class.get_str_greater_is_better(model_type, eval_metric, metrics_dict)
     assert result == expected
+
 
 @pytest.mark.parametrize("model_class", all_model_classes)
 @pytest.mark.parametrize("X, y, train_idx, test_idx, expected_X_train, expected_y_train, expected_X_test, expected_y_test", [

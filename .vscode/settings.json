@@ -4,7 +4,7 @@
         "tests", 
         "-n", "auto",
         "--disable-warnings",
-        "--testmon"
+        // "--testmon"
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
